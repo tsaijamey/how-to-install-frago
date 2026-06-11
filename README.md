@@ -5,11 +5,11 @@
 
 ## What this skill does
 
-This skill lets Claude Code install frago from source end to end on macOS, Linux, or Windows: it prepares git and uv, clones the repository, builds the environment with uv sync, then writes every required configuration file by hand — runtime launcher config, hook binary deployment, and merged hook registration in Claude Code settings — so no frago setup command is ever needed. It finishes with a four-step verification that proves the CLI and the full hook chain work.
+This skill lets Claude Code install frago from source end to end on macOS, Linux, or Windows: it prepares git and uv, clones the repository, builds the virtualenv with uv sync, then writes every configuration file by hand — config.json, runtime.json, the deployed hook binary, and a careful merge into Claude Code's settings.json — so the hook chain works on the next session without ever running frago's own init or server commands.
 
 ## When to use
 
-This skill should be used when the user wants to install frago from source on their machine (macOS/Linux/Windows) and configure it for Claude Code without running any frago commands. It guides Claude Code to clone the frago repository, build the environment with uv sync, then hand-write all configuration files (~/.frago/config.json, ~/.frago/runtime.json, hook binary deployment to ~/.claude/hooks/frago/, and merged hooks registration in ~/.claude/settings.json), replacing the frago init / frago server auto-configuration flow. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago source install", "install frago from source", "deploy frago hooks", "把 frago 装到我的机器上".
+This skill should be used when a user asks to install frago from source on their machine (macOS/Linux/Windows) and configure it for Claude Code without running any frago commands for setup. It guides cloning the frago repository, building the environment with uv sync, then directly writing all required configuration files (~/.frago/config.json, ~/.frago/runtime.json, deploying the bundled frago-hook binary, and merging the hooks section into ~/.claude/settings.json) so the hook chain works on next Claude Code session. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago from source", "frago source install", "frago manual setup", "把 frago 装到我电脑上".
 
 ## Usage
 
@@ -17,7 +17,7 @@ See [`skills/frago-source-install/SKILL.md`](skills/frago-source-install/SKILL.m
 
 ## Keywords
 
-`source-install`, `uv`, `claude-code-hooks`, `settings-json`, `environment-setup`, `cross-platform`
+`source-install`, `uv-sync`, `hook-deployment`, `settings-merge`, `runtime-config`, `cross-platform-setup`
 
 ## About this skill
 
