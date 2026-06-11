@@ -1,23 +1,23 @@
-# frago-source-setup
+# frago-source-install
 
 > Powered by **[frago](https://frago.ai)** — An Agent OS that turns ad-hoc agent runs into reusable recipes.
 > Install: `uv tool install frago-cli`
 
 ## What this skill does
 
-Walks through turning a bare machine into a working source installation of a uv-based agent CLI with Claude Code hooks fully wired by hand. It covers per-OS prerequisites, cloning and building the environment with uv sync, deploying the bundled per-platform hook binary, safely merge-writing hook registrations into Claude Code settings, authoring the runtime config files that the hook chain depends on, optionally routing Claude Code to a third-party Anthropic-compatible endpoint, and verifying every link of the chain with concrete troubleshooting pointers when a step fails.
+This skill walks Claude Code through a complete source installation of frago on the user's machine. It checks and installs prerequisites (git, uv), clones the repository, builds an isolated Python environment with uv sync, then hand-writes every configuration file frago needs: ~/.frago/config.json, ~/.frago/runtime.json with the launcher path, the platform-specific hook binary under ~/.claude/hooks/frago/, and the hook registrations merged into ~/.claude/settings.json. No frago setup commands are ever run, the user's existing Claude Code authentication stays untouched, and a four-step verification confirms the hook pipeline works end to end. An optional appendix covers third-party Anthropic-compatible API endpoints.
 
 ## When to use
 
-This skill should be used when installing a uv-based agent CLI from its Git source and wiring its Claude Code hook integration entirely by hand, replacing the built-in init wizard and the server-side auto-configuration. Trigger phrases: "install from source", "source install", "set up without running the server", "manual hook setup", "configure Claude Code hooks manually", "deploy the hook binary by hand", "write the runtime config manually", "use a third-party Anthropic-compatible API endpoint". It covers per-OS prerequisites (git, uv, optional Chrome), cloning the repository and creating the environment with uv sync, deploying the bundled per-platform hook binary into ~/.claude/hooks, merge-writing hook registrations into ~/.claude/settings.json, authoring the runtime's config.json and runtime.json by hand, optionally pointing Claude Code at a compatible third-party endpoint, and verifying the full hook chain end to end with concrete troubleshooting pointers for each failure mode.
+This skill should be used when a user wants to install frago from source and configure it for Claude Code on macOS, Linux, or Windows. It clones the frago repository, builds the environment with uv, then writes every configuration file directly (~/.frago/config.json, ~/.frago/runtime.json, hook binary deployment to ~/.claude/hooks/frago/, and a hooks merge into ~/.claude/settings.json) — never running frago init or frago server. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago from source", "frago source install", "frago manual setup", "在我电脑上装 frago".
 
 ## Usage
 
-See [`skills/frago-source-setup/SKILL.md`](skills/frago-source-setup/SKILL.md) for the full skill definition.
+See [`skills/frago-source-install/SKILL.md`](skills/frago-source-install/SKILL.md) for the full skill definition.
 
 ## Keywords
 
-`source-installation`, `uv`, `claude-code-hooks`, `manual-configuration`, `settings-json`, `hook-binary`, `anthropic-compatible-endpoint`
+`source-installation`, `hooks-configuration`, `cli-setup`, `uv-python`, `manual-configuration`, `cross-platform`
 
 ## About this skill
 

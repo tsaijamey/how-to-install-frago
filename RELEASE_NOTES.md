@@ -1,18 +1,18 @@
 ## What's in this release
 
-Initial release of the source-install and manual-configuration workflow, verified layer by layer against the actual source code rather than assembled from docs.
+First public release of the frago-source-install skill. It teaches Claude Code to install frago from source and configure it entirely by writing files — no `frago init`, no `frago server start`.
 
 ## Features
 
-- Per-OS prerequisite setup (macOS / Linux / Windows) using git and uv, with Python auto-provisioned by uv per the project's `requires-python` constraint
-- Clone-and-build steps producing a ready CLI entry point inside the repo's `.venv`
-- Hand-written configuration that replaces the init wizard and the server's auto-configuration: runtime launcher config, per-platform hook binary deployment with correct permissions, and merge-safe hook registration into `~/.claude/settings.json` (never overwriting existing user settings)
-- Dynamic hook-event discovery via the binary's `--supported-events` output, so the registration stays correct as supported events evolve
-- Windows-specific path guidance (forward slashes required because hooks launch through Git Bash)
-- Optional appendix for routing Claude Code to a third-party Anthropic-compatible endpoint (deepseek, aliyun, kimi, minimax, custom) including the onboarding-skip fields
-- A four-step verification checklist with failure-mode triage for each link of the hook chain
+- Cross-platform prerequisite setup (macOS / Linux / Windows) using git and uv; Python is downloaded automatically by uv per the project's `requires-python >= 3.13`
+- Repository clone and `uv sync` environment build, with the CLI entry point at `<repo>/.venv/bin/frago`
+- Direct configuration writes: `~/.frago/config.json` (only when absent), `~/.frago/runtime.json` carrying the launcher path the Rust hook depends on, hook binary deployment to `~/.claude/hooks/frago/`, and a safe merge of hook registrations into `~/.claude/settings.json`
+- Event list fetched dynamically from `frago-hook --supported-events`, so the skill stays correct as versions evolve
+- Four-step verification covering the CLI, the knowledge index, the hook binary, and end-to-end SessionStart injection, with targeted troubleshooting pointers
+- Optional appendix for Anthropic-compatible third-party API endpoints (deepseek, aliyun, kimi, minimax, custom)
 
 ## Known limitations
 
-- Hook functionality is unavailable on platforms without a bundled binary (e.g. linux-aarch64); the CLI itself still works
-- The workflow assumes Claude Code is already installed; it configures hooks and endpoints but does not install Claude Code itself
+- Hook features are unavailable on platforms without a bundled binary (e.g. linux-aarch64); the CLI itself still works
+- Does not install the desktop (Tauri) client, Node.js, or Claude Code itself
+- Never modifies existing Claude Code authentication; third-party endpoint setup is opt-in only
