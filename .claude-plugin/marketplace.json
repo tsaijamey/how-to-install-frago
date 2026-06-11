@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "frago-source-setup",
+  "owner": {
+    "name": "tsaijamey",
+    "url": "https://github.com/tsaijamey"
+  },
+  "metadata": {
+    "description": "This skill should be used when installing a uv-based agent CLI from its Git source and wiring its Claude Code hook integration entirely by hand, replacing the built-in init wizard and the server-side auto-configuration. Trigger phrases: \"install from source\", \"source install\", \"set up without running the server\", \"manual hook setup\", \"configure Claude Code hooks manually\", \"deploy the hook binary by hand\", \"write the runtime config manually\", \"use a third-party Anthropic-compatible API endpoint\". It covers per-OS prerequisites (git, uv, optional Chrome), cloning the repository and creating the environment with uv sync, deploying the bundled per-platform hook binary into ~/.claude/hooks, merge-writing hook registrations into ~/.claude/settings.json, authoring the runtime's config.json and runtime.json by hand, optionally pointing Claude Code at a compatible third-party endpoint, and verifying the full hook chain end to end with concrete troubleshooting pointers for each failure mode.",
+    "version": "0.1.0",
+    "homepage": "https://frago.ai",
+    "keywords": [
+      "frago",
+      "source-installation",
+      "uv",
+      "claude-code-hooks",
+      "manual-configuration",
+      "settings-json",
+      "hook-binary",
+      "anthropic-compatible-endpoint"
+    ]
+  },
+  "plugins": [
+    {
+      "name": "frago-source-setup",
+      "source": "./",
+      "description": "This skill should be used when installing a uv-based agent CLI from its Git source and wiring its Claude Code hook integration entirely by hand, replacing the built-in init wizard and the server-side auto-configuration. Trigger phrases: \"install from source\", \"source install\", \"set up without running the server\", \"manual hook setup\", \"configure Claude Code hooks manually\", \"deploy the hook binary by hand\", \"write the runtime config manually\", \"use a third-party Anthropic-compatible API endpoint\". It covers per-OS prerequisites (git, uv, optional Chrome), cloning the repository and creating the environment with uv sync, deploying the bundled per-platform hook binary into ~/.claude/hooks, merge-writing hook registrations into ~/.claude/settings.json, authoring the runtime's config.json and runtime.json by hand, optionally pointing Claude Code at a compatible third-party endpoint, and verifying the full hook chain end to end with concrete troubleshooting pointers for each failure mode."
+    }
+  ]
+}
