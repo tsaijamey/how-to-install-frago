@@ -5,11 +5,11 @@
 
 ## What this skill does
 
-This skill lets Claude Code install frago from source end to end on macOS, Linux, or Windows: it prepares git and uv, clones the repository, builds the virtualenv with uv sync, then writes every configuration file by hand — config.json, runtime.json, the deployed hook binary, and a careful merge into Claude Code's settings.json — so the hook chain works on the next session without ever running frago's own init or server commands.
+This skill lets Claude Code install and configure frago from source on the user's machine without the user typing a single frago command. The agent prepares git and uv, clones the repository, builds the environment with uv sync, runs the frago server once so product code auto-deploys the Claude Code hook, registers events, and writes the runtime launcher config, then verifies every artifact on disk. It asks whether to keep the resident server and falls back to a documented manual configuration path only if server startup fails.
 
 ## When to use
 
-This skill should be used when a user asks to install frago from source on their machine (macOS/Linux/Windows) and configure it for Claude Code without running any frago commands for setup. It guides cloning the frago repository, building the environment with uv sync, then directly writing all required configuration files (~/.frago/config.json, ~/.frago/runtime.json, deploying the bundled frago-hook binary, and merging the hooks section into ~/.claude/settings.json) so the hook chain works on next Claude Code session. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago from source", "frago source install", "frago manual setup", "把 frago 装到我电脑上".
+This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, run the frago server once so product code auto-deploys hooks and runtime config, then verify the artifacts — the user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago".
 
 ## Usage
 
@@ -17,7 +17,7 @@ See [`skills/frago-source-install/SKILL.md`](skills/frago-source-install/SKILL.m
 
 ## Keywords
 
-`source-install`, `uv-sync`, `hook-deployment`, `settings-merge`, `runtime-config`, `cross-platform-setup`
+`source-install`, `uv`, `claude-code-hooks`, `agent-runtime`, `environment-setup`, `cross-platform`
 
 ## About this skill
 
