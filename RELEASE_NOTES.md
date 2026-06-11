@@ -1,18 +1,14 @@
 ## What's in this release
-
-First public release of the frago-source-install skill. It teaches Claude Code to install frago from source and configure it entirely by writing files — no `frago init`, no `frago server start`.
+Initial release (v0.1.0) of the source-install skill: a complete, verified workflow for installing frago from a git clone and configuring it for Claude Code by writing configuration files directly, with no reliance on built-in setup commands.
 
 ## Features
-
-- Cross-platform prerequisite setup (macOS / Linux / Windows) using git and uv; Python is downloaded automatically by uv per the project's `requires-python >= 3.13`
-- Repository clone and `uv sync` environment build, with the CLI entry point at `<repo>/.venv/bin/frago`
-- Direct configuration writes: `~/.frago/config.json` (only when absent), `~/.frago/runtime.json` carrying the launcher path the Rust hook depends on, hook binary deployment to `~/.claude/hooks/frago/`, and a safe merge of hook registrations into `~/.claude/settings.json`
-- Event list fetched dynamically from `frago-hook --supported-events`, so the skill stays correct as versions evolve
-- Four-step verification covering the CLI, the knowledge index, the hook binary, and end-to-end SessionStart injection, with targeted troubleshooting pointers
-- Optional appendix for Anthropic-compatible third-party API endpoints (deepseek, aliyun, kimi, minimax, custom)
+- Per-OS environment preparation for macOS, Linux, and Windows, including the Git Bash requirement that makes hooks work on Windows
+- Clone and build with uv (managed Python auto-download, no compiler toolchain needed) plus mirror fallbacks for restricted networks
+- Hand-written configuration replacing the auto-setup flow: config.json, runtime.json launcher wiring, hook binary deployment, and safe merge-only edits to Claude Code settings.json
+- Optional appendix for third-party Anthropic-compatible API endpoints
+- Four-step verification covering CLI, knowledge index, hook binary, and the end-to-end SessionStart injection
 
 ## Known limitations
-
-- Hook features are unavailable on platforms without a bundled binary (e.g. linux-aarch64); the CLI itself still works
-- Does not install the desktop (Tauri) client, Node.js, or Claude Code itself
-- Never modifies existing Claude Code authentication; third-party endpoint setup is opt-in only
+- Hook functionality requires a prebuilt binary for the platform (darwin-arm64, darwin-x86_64, linux-x86_64, windows-x86_64); other platforms get CLI-only
+- Does not install the desktop client, Node.js, or Claude Code itself
+- Does not touch existing Claude Code authentication
