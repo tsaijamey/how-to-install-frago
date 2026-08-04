@@ -5,11 +5,13 @@
 
 ## What this skill does
 
-This skill lets Claude Code install and configure frago from source on the user's machine without the user typing a single frago command. The agent prepares git and uv, clones the repository, builds the environment with uv sync, runs the frago server once so product code auto-deploys the Claude Code hook, registers events, and writes the runtime launcher config, then verifies every artifact on disk. It asks whether to keep the resident server and falls back to a documented manual configuration path only if server startup fails.
+This skill lets Claude Code install and configure frago from source on the user's machine without the user typing a single frago command. The agent prepares git and uv, clones the repository, builds the environment with uv sync, publishes it as the system frago by running the server once — which deploys the hook binary, registers events in Claude Code's settings, and bridges opencode when present — then verifies every artifact on disk.
+
+It does not stop at "installed". It offers to back the user's frago working directory up to a private GitHub repository, and sets up the credentials without which frago cannot do much: model profiles for the sub-agents it runs, and per-recipe API keys. Both are entered in the local web settings page rather than pasted into a chat. A documented manual path remains as a fallback for when the server will not start.
 
 ## When to use
 
-This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, run the frago server once so product code auto-deploys hooks and runtime config, then verify the artifacts — the user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago".
+This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code, or when an installed frago cannot delegate work or run a recipe because no credentials have been set up yet. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份".
 
 ## Usage
 
@@ -17,7 +19,7 @@ See [`skills/frago-source-install/SKILL.md`](skills/frago-source-install/SKILL.m
 
 ## Keywords
 
-`source-install`, `uv`, `claude-code-hooks`, `agent-runtime`, `environment-setup`, `cross-platform`
+`source-install`, `uv`, `claude-code-hooks`, `agent-runtime`, `environment-setup`, `cross-platform`, `api-profiles`, `github-backup`
 
 ## About this skill
 

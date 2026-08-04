@@ -1,54 +1,119 @@
 ---
 name: frago-source-install
 description: |
-  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, run the frago server once so product code auto-deploys hooks and runtime config, then verify the artifacts — the user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago".
+  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, publish it as the system frago by running the server once, verify the deployed artifacts, offer to back the user's frago working directory up to a private GitHub repository via the gh CLI, and set up the credentials frago needs to actually do work — model profiles for sub-agents and per-recipe API keys — through the local web settings page. The user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份", "frago-working-dir".
 license: AGPL-3.0
 ---
 
 ## Overview
-Install and configure frago from source so the user's Claude Code gains the frago runtime (hooks, knowledge index, CLI). The agent performs every step; the user never types a frago command. Main path: clone → uv sync → run `frago server start` once so product code auto-completes all configuration → verify artifacts → ask whether to keep the resident server. Hand-writing config files is only a fallback when the server fails to start.
+Install frago from source so the user's Claude Code (and opencode, if present) gains the frago runtime — hooks, knowledge index, CLI — then set up the two things without which most of frago sits idle: a backup of the working directory, and the credentials that let frago delegate work and call outside services. The agent performs every terminal step; the user's own hands are needed twice only — a browser login for GitHub, and typing API keys into a local web page, which is the one place a key should never be pasted into a chat.
+
+Main path: clone → `uv sync` → run the server once from the checkout (this is also the packaging step) → verify four artifacts → offer GitHub backup → configure model profiles and recipe credentials in the web UI → decide about the resident server → end-to-end check.
 
 ## Scope
-Do NOT install the desktop (Tauri) client, Node.js, or Claude Code itself. Do NOT touch the user's existing Claude Code authentication. Third-party API endpoint setup is an optional appendix only.
+Do NOT install the desktop (Tauri) client, Node.js, or Claude Code itself. Do NOT run `frago init` — it installs Claude Code and rewrites authentication, which is not what a user asking to install frago is asking for. Do NOT touch the user's existing Claude Code authentication. Hand-writing config files is a fallback for when the server will not start, not a normal step.
+
+## The one rule that breaks installs
+frago refuses to run from its own source checkout. Every command except `server` exits with a refusal, and the server refuses to run out of the repository's virtual environment. This is deliberate: repository code paired with a system-installed server is a combination no user runs.
+
+So there are exactly two forms:
+- Inside the repository, only this: `uv run frago server start` (or `restart`). It bumps the patch version, builds a wheel, installs it as the system frago via `uv tool install --force`, and hands over. This is how source code becomes the installed product.
+- Everywhere else, the plain `frago` command, which after the step above lives at `~/.local/bin/frago`.
+
+Never suggest `<repo>/.venv/bin/frago <anything>`. It will be refused, and the refusal message reads like a failed install to a non-technical user.
 
 ## Steps
 
 ### 1. Prepare prerequisites (git + uv only)
-Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels except one pure-Python package, so no C/C++ toolchain is needed on any OS. Google Chrome is optional (browser automation only).
+Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS. Google Chrome is optional (browser automation only).
 - macOS: ensure git via `xcode-select --install`; install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Linux: install git and curl via apt/dnf/pacman; uv same as macOS.
 - Windows: `winget install Git.Git` (fallback: git-scm.com installer); uv via `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
-- On POSIX, uv lands in `~/.local/bin`, which may not be on PATH in the current session — call it as `~/.local/bin/uv` or `source ~/.local/bin/env` first. Windows installer writes PATH to the registry; new processes see it.
+- On POSIX, uv lands in `~/.local/bin`, which may not be on PATH in the current session — call it as `~/.local/bin/uv` or `source ~/.local/bin/env` first.
+
+`~/.local/bin` must end up on the user's permanent PATH, not just this shell. frago's hooks invoke the bare command `frago`; if the shell that launches Claude Code cannot find it, hooks still fire but every knowledge injection comes back empty, and nothing announces why. Check the user's shell profile and add it if missing.
 
 ### 2. Clone and build the environment
-`git clone https://github.com/tsaijamey/frago.git` to a stable path such as `~/frago`. In regions where github.com is unreachable, prefix with a mirror: `https://mirror.ghproxy.com/https://github.com/tsaijamey/frago.git` or `https://ghproxy.net/...`. Then run `uv sync` inside the repository (no `--all-extras --dev` needed). The CLI entry point is `<repo>/.venv/bin/frago` (Windows: `.venv/Scripts/frago.exe`).
+`git clone https://github.com/tsaijamey/frago.git` to a stable path such as `~/frago`. In regions where github.com is unreachable, prefix with a mirror: `https://mirror.ghproxy.com/https://github.com/tsaijamey/frago.git` or `https://ghproxy.net/...`. Then run `uv sync` inside the repository (no `--all-extras --dev` needed). Keep the checkout — later steps read a file from it, and upgrades are a `git pull` plus one server restart.
 
-### 3. Main path: run the server once for automatic configuration
-Execute `<absolute-repo-path>/.venv/bin/frago server start` and wait a few seconds. On startup the product code automatically: (a) deploys the platform hook binary to `~/.claude/hooks/frago/frago-hook`; (b) registers events from the binary's `--supported-events` output into `~/.claude/settings.json` via merge-write, leaving existing config untouched; (c) detects the launcher and writes `~/.frago/runtime.json`. This stays correct across frago versions, unlike hand-written snapshots.
+### 3. Publish and start: run the server once from the checkout
+Run `uv run frago server start` from inside the repository and wait. Expect output naming the version it bumped to, the wheel it built, and the handover to the system frago. On startup the product code automatically:
+- deploys the platform hook binary to `~/.frago/bin/frago-core` and deletes stale copies from older layouts;
+- registers events in `~/.claude/settings.json` by merge-write, leaving unrelated hooks untouched;
+- deploys the opencode bridge to `~/.config/opencode/plugin/` when opencode is installed.
 
-### 4. Verify the three artifacts
-- `~/.frago/runtime.json` exists with a non-empty `launcher.command`.
-- `~/.claude/hooks/frago/frago-hook` (`.exe` on Windows) exists and is executable.
-- The `hooks` section of `~/.claude/settings.json` registers frago-hook for SessionStart, UserPromptSubmit, and PreToolUse.
-Also confirm `<repo>/.venv/bin/frago --version` and `frago book` produce output.
+Deployment finishes roughly twenty seconds into startup, not instantly. Checking too early shows a half-configured machine; wait for the server to answer before verifying.
 
-### 5. Ask about the resident server
-The server provides the full agent-OS surface: Web UI at http://127.0.0.1:8093, scheduling, task intake (binds port 8093). Ask the user whether to keep it running. If not, run `frago server stop` — all on-disk configuration artifacts remain and the hook chain keeps working.
+### 4. Verify four artifacts
+Run these as the plain `frago` command, from any directory that is not the checkout:
+- `frago --version` prints the version that was just installed.
+- `frago book` prints the knowledge index.
+- `~/.frago/bin/frago-core` exists and is executable (`frago-core.exe` on Windows).
+- The `hooks` section of `~/.claude/settings.json` registers, for SessionStart, UserPromptSubmit and PreToolUse, a command ending in `frago-core --engine` with `timeout: 10`.
 
-### 6. Final end-to-end check
-Have the user restart Claude Code; a new session should inject the frago knowledge index at SessionStart, proving the runtime.json → hook → `frago book` chain works.
+The `--engine` flag is not optional. That binary holds two programs: without the flag it starts the agentic kernel instead of routing the hook event, and hooks go silently dead.
 
-## Appendix A: Manual fallback (only if `server start` fails, e.g. port conflict)
+There is no `~/.frago/runtime.json` any more. If an older guide tells you to create or check one, ignore it — nothing reads that file.
+
+If the user runs opencode, also confirm `~/.config/opencode/plugin/` contains `frago-hook.js` alongside three `.json` files.
+
+### 5. Offer to back up the working directory to GitHub
+Everything the user accumulates through frago — recipes they build, knowledge domains they fill, routing rules, run history — lives in `~/.frago`. It is not in the repository they just cloned and no upgrade recreates it. frago is designed to keep that directory as a git repository mirrored to a **private** GitHub repository named `frago-working-dir`, which is also what makes a second machine possible.
+
+Raise this as a choice, not a step to push through: explain what is being backed up and where, and ask whether the user wants it. If they decline, say plainly that their recipes and knowledge then exist on this machine only, and move on — everything else works without it.
+
+If they accept:
+
+**a. Make sure the gh CLI is there and logged in.** Check `gh --version` and `gh auth status`. Install if missing — macOS `brew install gh`, Debian/Ubuntu `sudo apt install gh`, Fedora `sudo dnf install gh`, Windows `winget install GitHub.cli`.
+
+`gh auth login` is interactive: it asks a few questions and opens a browser for a one-time code. The agent cannot answer those prompts on the user's behalf, so hand it over explicitly — in Claude Code the user can run it in place by typing `!gh auth login`, and the login is complete when `gh auth status` reports the account. Users who have no GitHub account create one at github.com first; the login flow will not do it for them.
+
+**b. Put the ignore rules in place before anything is committed.** `~/.frago` holds `profiles.json`, `recipes.local.json` and `config.json`, all of which contain API keys in plain text. The package ships the authoritative ignore list; nothing deploys it automatically, so copy it from the checkout:
+
+`cp <repo>/src/frago/resources/frago-home-gitignore.template ~/.frago/.gitignore`
+
+**c. Confirm no secret is staged, before the first push.** Run `git -C ~/.frago init` (skip if already a repository), then `git -C ~/.frago status --short` and read the list. If `profiles.json`, `recipes.local.json`, `config.json` or any `.env` file appears, stop — the ignore file did not land. Never push past this check.
+
+**d. Create the private repository and push.** `git -C ~/.frago add -A && git -C ~/.frago commit -m "frago working dir"`, then `gh repo create frago-working-dir --private --source ~/.frago --push`. Tell the user the repository is private and why that matters: it holds their work, their notes, and the shape of what they automate.
+
+Later syncs are ordinary git — commit and push from `~/.frago`. On a second machine, clone that repository into `~/.frago` before installing frago there.
+
+### 6. Configure model profiles (needed before frago can delegate work)
+frago runs sub-agents for the user — research, monitoring, long jobs — and each sub-agent needs a model to run on. Those live in model profiles, and a fresh install has none. Without one, delegation falls back to whatever the user's own Claude Code is authenticated as, and `frago agent --use-profile <name>` has nothing to select.
+
+Profiles are created in the web settings page, never by hand: the file holds plaintext API keys and is written with owner-only permissions. Open `http://127.0.0.1:8093`, go to Settings, and use the Profiles panel. Each profile needs a display name, an endpoint type, an API key, and — for non-Anthropic endpoints — a base URL and the model names to use. Ask the user which provider they already pay for; do not recommend signing up for anything.
+
+Tell the user plainly: paste the key into that page, not into the chat. Verify afterwards with `frago profile list`, which prints saved profiles with keys masked. That command is read-only by design — creating and editing happen only in the web UI.
+
+### 7. Configure recipe credentials (only for recipes the user will actually run)
+Recipes that call an outside service read their key from `~/.frago/recipes.local.json`. A recipe with no key fails immediately with a message naming what is missing — for example the built-in image-reading recipe reports `api_key missing` and stops.
+
+Do not pre-fill keys for recipes the user has not asked for. When a recipe does fail this way, open `http://127.0.0.1:8093`, go to Recipes, open that recipe, and have the user fill its credentials dialog — the fields are generated from what the recipe itself declares, so only the keys it truly needs are asked for. Same rule as profiles: the key goes into the page, not the chat.
+
+### 8. Decide about the resident server
+The server provides the web UI on port 8093, scheduling, and task intake. Steps 6 and 7 need it running. Ask whether to keep it. If the user says no, run `frago server stop` — every on-disk artifact remains and the hook chain keeps working; only the web UI and scheduling go away, and the user will need `frago server start` again to change credentials later.
+
+### 9. Final end-to-end check
+Have the user restart Claude Code. A new session should show frago's knowledge index injected at session start, which proves the whole chain: PATH finds `frago`, settings.json points at the binary, the binary routes the event, the CLI answers.
+
+## Troubleshooting, by what the user sees
+- "Refusing to run: this frago comes from the source checkout" — a command was run from inside the repository. Run it from elsewhere as the plain `frago`, or, if it is genuinely the server, use `uv run frago server start` from the repository.
+- Sessions start with no frago knowledge — check PATH first (`frago --version` in a fresh terminal), then that the registered command in settings.json ends with `--engine`, then that `~/.frago/bin/frago-core` is executable.
+- `frago: command not found` — `~/.local/bin` is not on the permanent PATH; fix the shell profile rather than using absolute paths.
+- Port 8093 already in use — another frago server is already running; `frago server status` confirms it. Do not start a second one.
+- A recipe stops with `api_key missing` — that is step 7, not a broken install.
+- `gh auth login` opens no browser (headless or remote machine) — choose the device-code path it offers and open the URL on any other device; the code is short-lived, so retry rather than reuse an expired one.
+- `gh repo create` reports the name is taken — the user already has a `frago-working-dir`, probably from another machine. Clone that one into `~/.frago` instead of creating a second.
+
+## Appendix: manual fallback (only when `uv run frago server start` fails outright)
 Also usable as an acceptance checklist:
 1. `~/.frago/config.json` (write only if absent, never overwrite): `{"schema_version": "1.0", "auth_method": "official", "init_completed": true}`. `auth_method=official` means the user's existing Claude Code auth is untouched.
-2. `~/.frago/runtime.json`: `{"schema_version": "1.0", "launcher": {"command": ["<absolute-repo-path>/.venv/bin/frago"], "mode": "global", "detected_at": "<ISO timestamp>", "source": {}}}`. If missing or launcher empty, the hook silently does nothing (by design). Windows paths must use forward slashes (C:/Users/...).
-3. `mkdir -p ~/.claude/hooks/frago/`, copy `<repo>/src/frago/bin/<platform>/frago-hook` there (platform dirs: darwin-arm64, darwin-x86_64, linux-x86_64, windows-x86_64; Windows filename frago-hook.exe; on platforms without a binary such as linux-aarch64 the hook is unavailable but the CLI works). POSIX: `chmod 755`.
-4. Merge-write the `hooks` section of `~/.claude/settings.json` (never overwrite wholesale): run `<binary> --supported-events` to get the live event list (currently SessionStart/UserPromptSubmit/PreToolUse) and append per event `{"matcher": "", "hooks": [{"type": "command", "command": "<absolute path to ~/.claude/hooks/frago/frago-hook>", "timeout": 10}]}`, skipping commands already registered.
-5. Do NOT hand-write: hook-rules.json (builtin rules are compiled into the binary), `~/.frago/books/` (system knowledge ships in the Python package), AGENTS.md/.gitignore; other `~/.frago` subdirectories are lazily created by the CLI.
-Troubleshooting order: is the runtime.json launcher path absolute and existing → is the registered command path in settings.json correct → is the binary executable.
+2. `mkdir -p ~/.frago/bin/`, copy `<repo>/src/frago/bin/<platform>/frago-core` there (platform directories: darwin-arm64, darwin-x86_64, linux-x86_64, windows-x86_64; Windows filename `frago-core.exe`; on platforms without a binary, such as linux-aarch64, hooks are unavailable but the CLI works). POSIX: `chmod 755`.
+3. Merge-write the `hooks` section of `~/.claude/settings.json`, never overwriting wholesale. Run `<binary> --supported-events` for the live event list, and append per event `{"matcher": "", "hooks": [{"type": "command", "command": "<absolute path to frago-core> --engine", "timeout": 10}]}`, skipping commands already registered. On Windows write the path with forward slashes — Claude Code launches hooks through Git Bash, which eats backslashes.
+4. Do NOT hand-write: `hook-rules.json` (builtin rules are compiled into the binary), `~/.frago/books/` (knowledge ships inside the Python package), `profiles.json` or `recipes.local.json` (both hold plaintext keys and belong in the web UI), AGENTS.md. Other `~/.frago` subdirectories are created lazily. The one file worth placing by hand is `~/.frago/.gitignore`, and only from the template named in step 5.
 
-## Appendix B (optional): Third-party API endpoint
-Only if the user has no official Anthropic auth: merge into the `env` section of `~/.claude/settings.json` the seven keys ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, ANTHROPIC_API_KEY (deepseek example: base_url=https://api.deepseek.com/anthropic); and ensure `~/.claude.json` contains `{"hasCompletedOnboarding": true, "lastOnboardingVersion": "1.0.0", "isQualifiedForDataSharing": false}` to skip the official login onboarding.
+## Appendix: third-party endpoint for Claude Code itself (optional)
+Only when the user has no official Anthropic authentication, and only for their own Claude Code — this is separate from frago's model profiles in step 6, which serve sub-agents. Merge into the `env` section of `~/.claude/settings.json` the seven keys ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, ANTHROPIC_API_KEY (deepseek example: base_url=https://api.deepseek.com/anthropic); and ensure `~/.claude.json` contains `{"hasCompletedOnboarding": true, "lastOnboardingVersion": "1.0.0", "isQualifiedForDataSharing": false}` to skip the official login onboarding.
 
 
 ---
