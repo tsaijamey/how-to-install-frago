@@ -1,21 +1,14 @@
 ## What's in this release
 
-v0.3.0 fixes an install path that no longer worked and extends the skill past "the software is on disk" to "the user can actually use it".
+v0.4.0 adds a decision the skill never made before installing: whether the target is a server or the install is running as root, and what that quietly costs.
 
-## Fixed — the previous version failed partway through
+## Added — a server/root check before the install begins
 
-- **Main path was refused.** frago now rejects every command run from its own source checkout except `server`, and refuses to run the server out of the repository's virtual environment. The old instruction `<repo>/.venv/bin/frago server start` exits with a refusal that reads like a broken install. The skill now uses `uv run frago server start` from inside the repository — the packaging path, which builds a wheel, installs it as the system frago, and hands over.
-- **Verification looked for the wrong things.** The hook binary is `~/.frago/bin/frago-core`, not `~/.claude/hooks/frago/frago-hook`, and its registered command must end in `--engine` — that binary holds two programs, and without the flag hooks silently start the wrong one.
-- **`runtime.json` is gone.** Nothing reads it any more. Every instruction to create or verify it has been removed.
-
-## Added — what was missing after a successful install
-
-- **GitHub backup, offered as a choice.** Everything a user accumulates — recipes, knowledge domains, routing rules — lives in `~/.frago` and no upgrade recreates it. The skill now walks through installing and authenticating the gh CLI, placing the ignore rules *before* the first commit, checking that no key file is staged, and creating a private `frago-working-dir` repository.
-- **Model profiles.** Sub-agents need a model to run on, and a fresh install has none. Configured through the local settings page, never by hand — the file holds plaintext keys.
-- **Recipe credentials.** Recipes that call an outside service fail with `api_key missing` until their key is entered in the recipe's own credentials dialog. Keys are typed into the page, not pasted into the chat.
-- **opencode users.** The bridge deploys automatically alongside the Claude Code hook; the skill now says what to verify.
-- **PATH is load-bearing.** Hooks invoke the bare `frago` command. If `~/.local/bin` is missing from the permanent PATH, hooks still fire but every knowledge injection comes back empty and nothing announces why.
-- **Troubleshooting by symptom**, written from what the user sees rather than what the system did — including the source-checkout refusal, empty injections, port 8093 conflicts, and gh login on a machine with no browser.
+- **Installing frago as root, or on a server, is now a decision the agent raises with the user instead of walking past.** A fresh cloud VPS logs you in as root by default, so this happens constantly without anyone choosing it. Two consequences follow that neither the installer nor frago announces:
+  - The frago server token is a credential for running commands as whatever account the server runs as — installed as root, that token is root on the whole box, not a sandbox.
+  - Sub-agents run as that same account, and Claude Code refuses to run its unattended permission-bypass (`--dangerously-skip-permissions`) as root. So on a root install the web UI, recipes and knowledge index all work, but `frago agent`, the primary agent and `frago remote` silently do nothing — the worker is spawned, Claude Code exits on the root refusal, and frago waits for a readiness signal that never comes. No line says why.
+- **The fix the skill now recommends:** run frago under a dedicated non-root user, and do the clone, the `uv` build, the resident server and every later `frago` command as that user — because the account that runs `frago server` is the account every agent inherits, so it must not be root. The server may still take root for a privileged port or a systemd unit.
+- **Scoped to Claude Code as the driving runtime.** opencode and codex do not carry the root refusal, so the section is skipped for them.
 
 ## Known limitations
 

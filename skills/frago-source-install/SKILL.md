@@ -13,6 +13,16 @@ Main path: clone → `uv sync` → run the server once from the checkout (this i
 ## Scope
 Do NOT install the desktop (Tauri) client, Node.js, or Claude Code itself. Do NOT run `frago init` — it installs Claude Code and rewrites authentication, which is not what a user asking to install frago is asking for. Do NOT touch the user's existing Claude Code authentication. Hand-writing config files is a fallback for when the server will not start, not a normal step.
 
+## Before you install: is this a server, and are you root?
+Most installs are one person's own machine — this section does not apply, install and move on. It matters when the target is a server the user will reach over the network, or when the install is running as **root**. A fresh cloud VPS logs you in as root by default, so this happens constantly without anyone choosing it. Check once, early: `id -u` is `0`, or the user talks about a server, a domain, "部署", "公网", exposing a page. Two things then go wrong, and neither prints an error:
+
+- **The frago server token is a credential for running commands as whatever account the server runs as.** Installed as root, that token — and anything that slips past the access gate — is root on the whole box, not a sandbox.
+- **frago's sub-agents run as that same account, and Claude Code refuses to run its unattended permission-bypass (`--dangerously-skip-permissions`) as root.** So on a root install the agent side never starts: the web UI, recipes and knowledge index all work, but delegation (`frago agent`), the primary agent, and `frago remote` silently do nothing — the worker is spawned, Claude Code exits on the root refusal, and frago waits for a readiness signal that never comes. There is no line that says why. (This breakage is specific to how Claude Code guards root; it does not touch the token risk above, which stands regardless.)
+
+So before installing on a server or as root, raise it with the user as a decision, not a step to push through — say what proceeding as root costs (a root-equivalent token, and an agent side that is silently dead), and that the fix is to run frago under a **dedicated non-root user**: create one (`useradd -m -s /bin/bash frago` or similar), and do the clone, the `uv` build, the resident server, and every later `frago` command as that user. The server may still need root for a privileged port or a systemd unit, but the account that runs `frago server` is the account every agent inherits, so that account must not be root. If the user understands the cost and still wants a root install — a throwaway box, no delegation needed — proceed, but state plainly what will not work.
+
+This concerns Claude Code as the runtime driving the install. If the user runs the installing agent through opencode or codex instead, skip this section — those do not carry the root refusal, and this problem is out of scope for them.
+
 ## The one rule that breaks installs
 frago refuses to run from its own source checkout. Every command except `server` exits with a refusal, and the server refuses to run out of the repository's virtual environment. This is deliberate: repository code paired with a system-installed server is a combination no user runs.
 
