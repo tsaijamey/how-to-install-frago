@@ -34,12 +34,25 @@ Never suggest `<repo>/.venv/bin/frago <anything>`. It will be refused, and the r
 
 ## Steps
 
-### 1. Prepare prerequisites (git + uv only)
-Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS. Google Chrome is optional (browser automation only).
+### 1. Prepare prerequisites
+**To install frago at all, git and uv are the whole list.** Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS.
 - macOS: ensure git via `xcode-select --install`; install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Linux: install git and curl via apt/dnf/pacman; uv same as macOS.
 - Windows: `winget install Git.Git` (fallback: git-scm.com installer); uv via `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
 - On POSIX, uv lands in `~/.local/bin`, which may not be on PATH in the current session — call it as `~/.local/bin/uv` or `source ~/.local/bin/env` first.
+
+**Four more, each only for a particular capability.** frago installs and starts without any of them, which is exactly why they are worth naming here: what they break, breaks quietly — one capability at a time, long after the install was declared a success. Do not install them behind the user's back. Ask what they intend to use frago for, set up what that needs, and say plainly what stays unavailable.
+
+| Needed for | What | Missing means |
+|---|---|---|
+| Delegating work (`frago agent`), the primary agent, `frago remote` | **tmux** | The worker never starts; `Error: tmux not found` is the whole message. Step 6, configuring model profiles, buys nothing without it |
+| Browser automation (`frago browser`) | **Microsoft Edge**, or another Chromium-family browser | `frago browser check` lists every browser as not found and asks for Edge |
+| Recording a tab, or the virtual desktop (`frago desktop`) | **ffmpeg** | The recording call fails outright; everything else keeps working. The virtual desktop also wants tmux and Edge |
+| Running recipes **on Linux** | **bubblewrap** (`bwrap`) | Recipes are refused rather than run unconfined. macOS uses its own sandbox and needs nothing extra |
+
+Where they come from: on macOS, tmux and ffmpeg via Homebrew, Edge from microsoft.com/edge as a normal app. On Linux, tmux, ffmpeg and bubblewrap from the distribution's package manager; Edge or Chromium from its repository. On Windows, Edge ships with the system and ffmpeg comes from winget, but tmux does not exist natively — delegation there needs WSL.
+
+**Edge, not Chrome.** frago's default browser backend drives Edge's *real* profile through an extension, which is what makes the user's existing logins usable. Chrome Stable has silently ignored the extension-loading flag since v137, so a Chrome-only machine cannot take that path at all. Earlier versions of this skill said "Google Chrome is optional (browser automation only)" — wrong in both halves, and it pointed people down a road that does not go anywhere.
 
 `~/.local/bin` must end up on the user's permanent PATH, not just this shell. frago's hooks invoke the bare command `frago`; if the shell that launches Claude Code cannot find it, hooks still fire but every knowledge injection comes back empty, and nothing announces why. Check the user's shell profile and add it if missing.
 
@@ -137,6 +150,10 @@ If step 9 ran, the rule the user stored is a stronger check than the banner: it 
 - `frago: command not found` — `~/.local/bin` is not on the permanent PATH; fix the shell profile rather than using absolute paths.
 - Port 8093 already in use — another frago server is already running; `frago server status` confirms it. Do not start a second one.
 - A recipe stops with `api_key missing` — that is step 7, not a broken install.
+- Delegation does nothing: `frago agent` returns without a worker ever starting — tmux is missing (step 1), or this is a root install (see the section above). Configuring more model profiles will not help either one.
+- `frago browser check` shows every browser as not found — no Chromium-family browser is installed; Edge is the one to add, and Chrome alone will not do (step 1).
+- A recording fails while everything else works — ffmpeg is missing (step 1).
+- On Linux, recipes are refused before they run — bubblewrap is missing (step 1). This is a refusal on purpose, not a crash.
 - `gh auth login` opens no browser (headless or remote machine) — choose the device-code path it offers and open the URL on any other device; the code is short-lived, so retry rather than reuse an expired one.
 - `gh repo create` reports the name is taken — the user already has a `frago-working-dir`, probably from another machine. Clone that one into `~/.frago` instead of creating a second.
 
