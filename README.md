@@ -1,4 +1,4 @@
-# frago-source-install
+# how-to-install-frago
 
 > Powered by **[frago](https://frago.ai)** — An Agent OS that turns ad-hoc agent runs into reusable recipes.
 > Install: `uv tool install frago-cli`
@@ -15,7 +15,7 @@ This skill should be used when a user wants to install or configure frago from s
 
 ## Usage
 
-See [`skills/frago-source-install/SKILL.md`](skills/frago-source-install/SKILL.md) for the full skill definition.
+See [`skills/how-to-install-frago/SKILL.md`](skills/how-to-install-frago/SKILL.md) for the full skill definition.
 
 ## Keywords
 
