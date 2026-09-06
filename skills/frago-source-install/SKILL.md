@@ -1,14 +1,14 @@
 ---
 name: frago-source-install
 description: |
-  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, publish it as the system frago by running the server once, verify the deployed artifacts, offer to back the user's frago working directory up to a private GitHub repository via the gh CLI, and set up the credentials frago needs to actually do work — model profiles for sub-agents and per-recipe API keys — through the local web settings page. The user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份", "frago-working-dir".
+  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, publish it as the system frago by running the server once, verify the deployed artifacts, offer to back the user's frago working directory up to a private GitHub repository via the gh CLI, and set up the credentials frago needs to actually do work — model profiles for sub-agents and per-recipe API keys — through the local web settings page, and finish by opening a welcome page that has the machine prove what changed. The user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份", "frago-working-dir".
 license: AGPL-3.0
 ---
 
 ## Overview
 Install frago from source so the user's Claude Code (and opencode, if present) gains the frago runtime — hooks, knowledge index, CLI — then set up the two things without which most of frago sits idle: a backup of the working directory, and the credentials that let frago delegate work and call outside services. The agent performs every terminal step; the user's own hands are needed twice only — a browser login for GitHub, and typing API keys into a local web page, which is the one place a key should never be pasted into a chat.
 
-Main path: clone → `uv sync` → run the server once from the checkout (this is also the packaging step) → verify four artifacts → offer GitHub backup → configure model profiles and recipe credentials in the web UI → decide about the resident server → end-to-end check.
+Main path: clone → `uv sync` → run the server once from the checkout (this is also the packaging step) → verify four artifacts → offer GitHub backup → configure model profiles and recipe credentials in the web UI → decide about the resident server → open the welcome page → end-to-end check.
 
 ## Scope
 Do NOT install the desktop (Tauri) client, Node.js, or Claude Code itself. Do NOT run `frago init` — it installs Claude Code and rewrites authentication, which is not what a user asking to install frago is asking for. Do NOT touch the user's existing Claude Code authentication. Hand-writing config files is a fallback for when the server will not start, not a normal step.
@@ -34,12 +34,25 @@ Never suggest `<repo>/.venv/bin/frago <anything>`. It will be refused, and the r
 
 ## Steps
 
-### 1. Prepare prerequisites (git + uv only)
-Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS. Google Chrome is optional (browser automation only).
+### 1. Prepare prerequisites
+**To install frago at all, git and uv are the whole list.** Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS.
 - macOS: ensure git via `xcode-select --install`; install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - Linux: install git and curl via apt/dnf/pacman; uv same as macOS.
 - Windows: `winget install Git.Git` (fallback: git-scm.com installer); uv via `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
 - On POSIX, uv lands in `~/.local/bin`, which may not be on PATH in the current session — call it as `~/.local/bin/uv` or `source ~/.local/bin/env` first.
+
+**Four more, each only for a particular capability.** frago installs and starts without any of them, which is exactly why they are worth naming here: what they break, breaks quietly — one capability at a time, long after the install was declared a success. Do not install them behind the user's back. Ask what they intend to use frago for, set up what that needs, and say plainly what stays unavailable.
+
+| Needed for | What | Missing means |
+|---|---|---|
+| Delegating work (`frago agent`), the primary agent, `frago remote` | **tmux** | The worker never starts; `Error: tmux not found` is the whole message. Step 6, configuring model profiles, buys nothing without it |
+| Browser automation (`frago browser`) | **Microsoft Edge**, or another Chromium-family browser | `frago browser check` lists every browser as not found and asks for Edge |
+| Recording a tab, or the virtual desktop (`frago desktop`) | **ffmpeg** | The recording call fails outright; everything else keeps working. The virtual desktop also wants tmux and Edge |
+| Running recipes **on Linux** | **bubblewrap** (`bwrap`) | Recipes are refused rather than run unconfined. macOS uses its own sandbox and needs nothing extra |
+
+Where they come from: on macOS, tmux and ffmpeg via Homebrew, Edge from microsoft.com/edge as a normal app. On Linux, tmux, ffmpeg and bubblewrap from the distribution's package manager; Edge or Chromium from its repository. On Windows, Edge ships with the system and ffmpeg comes from winget, but tmux does not exist natively — delegation there needs WSL.
+
+**Edge, not Chrome.** frago's default browser backend drives Edge's *real* profile through an extension, which is what makes the user's existing logins usable. Chrome Stable has silently ignored the extension-loading flag since v137, so a Chrome-only machine cannot take that path at all. Earlier versions of this skill said "Google Chrome is optional (browser automation only)" — wrong in both halves, and it pointed people down a road that does not go anywhere.
 
 `~/.local/bin` must end up on the user's permanent PATH, not just this shell. frago's hooks invoke the bare command `frago`; if the shell that launches Claude Code cannot find it, hooks still fire but every knowledge injection comes back empty, and nothing announces why. Check the user's shell profile and add it if missing.
 
@@ -103,8 +116,33 @@ Do not pre-fill keys for recipes the user has not asked for. When a recipe does 
 ### 8. Decide about the resident server
 The server provides the web UI on port 8093, scheduling, and task intake. Steps 6 and 7 need it running. Ask whether to keep it. If the user says no, run `frago server stop` — every on-disk artifact remains and the hook chain keeps working; only the web UI and scheduling go away, and the user will need `frago server start` again to change credentials later.
 
-### 9. Final end-to-end check
+### 9. Hand over the welcome page
+At this point everything works and the user has seen none of it. frago ships no recipes of its own, so fetch the one that introduces it from the community repository and run it — both commands, in this order, every install:
+
+```bash
+frago recipe install community:frago_welcome
+frago recipe run frago_welcome
+```
+
+The first pulls the recipe from `tsaijamey/frago-recipe-community`; the second prepares the page and hands it to the user's **own default browser** (the recipe returns `open_url` and the runner opens it). Do not use `frago browser navigate` for this — that drives the agent's controlled browser, which the user is not looking at. Do not paste the address and ask them to open it either; running the recipe is what opens it.
+
+Six screens, each with its own address (`#1`…`#6`, so any one of them can be reopened or sent to someone): what changed with the install, what they can ask for right now, a live demo, how that demo worked, and where to go next.
+
+Two things on the page reach back into this machine, and both are worth knowing about before the user presses them:
+
+- **The demo on screen four** — the user writes a rule of their own, presses a button, and it is stored in a knowledge domain here. The page then sends them back to this terminal to ask you about that rule.
+- **The "not really" buttons on screen two** — each one hands its question to a real agent session on this machine and prints the answer. That needs a model to be reachable: with step 6 done it answers in a few seconds; without one it falls back to a written sample and says on screen that it is a sample. Either way nothing breaks.
+
+When the user comes back and asks about the rule they stored, **answer it the way you would answer anything: look before you speak.** frago LightAgent routes the question to the domain it belongs in; if it does not, `frago my-rules find` reads it directly. Never tell them what their rule was from having watched them type it — that proves nothing. Read it back from the machine.
+
+Say the page is open and let them drive it. Do not narrate the screens.
+
+If either command fails (no network, repository unreachable), say so plainly and move on to the check below — the install itself is fine without the page.
+
+### 10. Final end-to-end check
 Have the user restart Claude Code. A new session should show frago's knowledge index injected at session start, which proves the whole chain: PATH finds `frago`, settings.json points at the binary, the binary routes the event, the CLI answers.
+
+If step 9 ran, the rule the user stored is a stronger check than the banner: it survives the restart, and answering from it exercises the same chain end to end.
 
 ## Troubleshooting, by what the user sees
 - "Refusing to run: this frago comes from the source checkout" — a command was run from inside the repository. Run it from elsewhere as the plain `frago`, or, if it is genuinely the server, use `uv run frago server start` from the repository.
@@ -112,6 +150,10 @@ Have the user restart Claude Code. A new session should show frago's knowledge i
 - `frago: command not found` — `~/.local/bin` is not on the permanent PATH; fix the shell profile rather than using absolute paths.
 - Port 8093 already in use — another frago server is already running; `frago server status` confirms it. Do not start a second one.
 - A recipe stops with `api_key missing` — that is step 7, not a broken install.
+- Delegation does nothing: `frago agent` returns without a worker ever starting — tmux is missing (step 1), or this is a root install (see the section above). Configuring more model profiles will not help either one.
+- `frago browser check` shows every browser as not found — no Chromium-family browser is installed; Edge is the one to add, and Chrome alone will not do (step 1).
+- A recording fails while everything else works — ffmpeg is missing (step 1).
+- On Linux, recipes are refused before they run — bubblewrap is missing (step 1). This is a refusal on purpose, not a crash.
 - `gh auth login` opens no browser (headless or remote machine) — choose the device-code path it offers and open the URL on any other device; the code is short-lived, so retry rather than reuse an expired one.
 - `gh repo create` reports the name is taken — the user already has a `frago-working-dir`, probably from another machine. Clone that one into `~/.frago` instead of creating a second.
 
