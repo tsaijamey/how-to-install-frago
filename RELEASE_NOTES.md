@@ -1,27 +1,31 @@
 ## What's in this release
 
-v0.5.0 fixes the thing every install ended on: it worked, and the user had seen none of it. The skill now finishes by putting a page in front of them and letting the machine prove itself.
+v0.6.0 moves every decision to the front. Before touching anything, the agent probes the machine with a script shipped in the skill, generates a page from that probe, and lets the user decide once — which CLIs to hook up, what may be installed, whether to set up LightAgent, what happens after. The user pastes one block of configuration back into the chat, and the install runs through without asking again.
 
-## Added — the install ends with something to look at
+## Changed — the page is generated, not shipped
 
-- **New step 9: install and open `frago_welcome`.** frago ships no recipes of its own, so the skill fetches this one from the community repository (`frago recipe install community:frago_welcome`) and runs it. The page opens in the user's own default browser — six screens, each with its own address (`#1`…`#6`): what changed with the install, what they can ask for right now, a live demo, how that demo worked, and where to go next.
-- **The demo is the point.** The user types a rule of their own on the page and presses a button; it is written into a knowledge domain on their machine. The page then sends them back to the terminal to ask the agent about that rule. Nothing in the conversation carries it — the agent has to read it off the machine to answer. That is the whole difference between frago and a capable chat window, shown rather than described.
-- **The skill is told how to answer it.** Look before speaking, and read the rule back from `frago my-rules find` rather than from having watched the user type it. Repeating what was on screen proves nothing.
-- **Step 10 (the end-to-end check) now leans on it.** The stored rule survives a Claude Code restart, so answering from it after the restart exercises the same chain the session-start banner only hints at.
-- **The page can also answer for itself.** On the comparison screen, each row has a "not really" button that hands its question to a real agent session on this machine and prints the answer; with model profiles configured (step 6) it answers in seconds, and without one it falls back to a written sample and says on screen that it is a sample.
-- **A failed install of the page is not a failed install of frago.** No network or an unreachable repository is reported plainly and the skill moves on.
+- **A probe script does the detection** (`assets/setup-page.sh`, `assets/setup-page.ps1` on Windows). It walks the parent process chain to recognise which agent CLI is running the skill, checks the four agent CLIs and every optional dependency, and writes an install hint for each missing item in the machine's own terms (Homebrew, apt, winget…). The agent runs one command and opens the path it prints; it no longer judges or edits anything by hand.
+- **The template carries no machine state.** Opened directly, it shows a single line saying it must be generated first. It cannot pretend to be someone's machine.
+- **Five screens, each one decision.** What this is and what the install touches · which CLIs to hook up · what to install and which services to keep · LightAgent · review and hand over. Nothing on the page reads as install progress; the first screen says plainly that nothing has been installed yet.
+- **The CLI running the skill is locked on.** It is tagged "in use" and cannot be unticked, because frago is being installed through it. Other installed CLIs are ticked by default and can be removed; CLIs that are not installed are listed too, and can be ticked to install and hook up (the user signs in to them afterwards). Ones the agent cannot install (WorkBuddy, codex on Linux) say so.
+- **Software is always listed the same way.** Every dependency appears as a row whether present or missing; presence only changes the row's state. Missing ones are installed only if ticked, required ones are locked on, and each row says what the capability is, what is lost without it, and how it would be installed.
+- **Keep the server / private backup repository** are decided on the page too. The backup option is named for what it is — a private repository under the user's own GitHub account — and ticking it pulls in `gh` if missing.
+- **Hand-over is a pasted block, not a hunted file.** The last screen shows the full configuration as text with a copy button. If LightAgent was set up, the key is first saved to a local file (`frago-setup-key.json`) and the configuration only records where that file is; the agent reads it once, creates the profile, and deletes it. The key never enters the chat.
+- **Bilingual.** English and 中文, following the browser's language, switchable in the top bar; currency and paths follow the language and OS. Each screen has its own address (`#1`…`#5`).
+- **codex's hook-trust gate is the agent's job.** codex records trust as a hash in its own config; the agent passes the gate by running codex once in tmux and choosing "Trust all", and only falls back to the user when tmux is absent.
+- **LightAgent's cost is a reference, not a headline**: 1B tokens a day on the main agent means about ¥2 / $0.30 of LightAgent on DeepSeek V4 Flash, billed by the user's own provider — frago itself charges nothing. Provider choices are DeepSeek (recommended), OpenRouter, or a custom endpoint.
 
-## Fixed — the prerequisites section was both wrong and short
+## Fixed
 
-- **"Google Chrome is optional (browser automation only)" is gone.** It was wrong in both halves: the default browser backend drives **Edge's** real profile through an extension, and Chrome Stable has silently ignored the extension-loading flag since v137 — so a Chrome-only machine cannot use that path at all.
-- **Four dependencies that were never mentioned now are**, each tied to the one capability it serves: **tmux** for delegation (`frago agent`, the primary agent, `frago remote`), **Edge** for browser automation, **ffmpeg** for recording a tab or the virtual desktop, and **bubblewrap** for running recipes on Linux. frago installs and starts without any of them, which is why their absence goes unnoticed until one capability quietly does nothing — the same shape as the root-install problem in v0.4.0.
-- **tmux is the one that matters most.** Without it, step 6 (model profiles) buys nothing: the profile is configured, the worker still never starts, and the only message is `Error: tmux not found`.
-- **The skill does not install any of them unattended.** It asks what the user intends to use, sets that up, and says plainly what stays unavailable. Troubleshooting now names each missing-dependency symptom.
+- The skill no longer assumes it is running under Claude Code; codex and opencode users get the same flow, and the page names whichever CLI is actually running it.
+- Missing dependencies are never installed unattended; the skill installs exactly what the configuration lists and says what stays unavailable.
 
 ## Known limitations
 
-- Does not install the desktop (Tauri) client, Node.js, or Claude Code itself
+- `setup-page.ps1` has not been exercised on a Windows machine yet
+- Passing codex's hook-trust gate from tmux has not been exercised end to end yet; the fallback is the user choosing "Trust all" once
+- The server registers hooks for every installed CLI on start; a CLI the user unticked is unregistered afterwards and comes back on the next `frago server restart`
+- Does not install the desktop (Tauri) client or Node.js; agent CLIs are installed only when ticked, and never signed in to
 - Hook binary unavailable on platforms without a shipped binary (e.g. linux-aarch64); the CLI still works there
 - Resident server binds port 8093; port conflicts require the manual fallback
 - `gh auth login` is interactive — the agent hands it to the user rather than answering its prompts
-- The welcome page needs the resident server (step 8): stopping it also takes the page away

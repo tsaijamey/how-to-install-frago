@@ -1,172 +1,282 @@
 ---
 name: how-to-install-frago
 description: |
-  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using their existing Claude Code. It guides the agent to clone the repository, build the environment with uv, publish it as the system frago by running the server once, verify the deployed artifacts, offer to back the user's frago working directory up to a private GitHub repository via the gh CLI, and set up the credentials frago needs to actually do work — model profiles for sub-agents and per-recipe API keys — through the local web settings page, and finish by opening a welcome page that has the machine prove what changed. The user never types a frago command themselves. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份", "frago-working-dir".
+  This skill should be used when a user wants to install or configure frago from source on their machine (macOS/Linux/Windows) using the agent CLI they already have — Claude Code, codex or opencode. The agent runs a probe script that detects which agent CLI is running the skill and what the machine already has, opens a generated local page that collects every decision up front — which CLIs to hook up, what may be installed, whether to set up LightAgent — then clones the repository, builds it with uv, publishes it as the system frago by running the server once, verifies only what frago cannot repair by itself, fetches recipes on demand, backs the working directory up to a private GitHub repository, and closes with a welcome page that has the machine prove what changed. The user never types a frago command themselves, and never pastes an API key into the chat. Trigger phrases: "install frago", "安装 frago", "配置 frago", "frago 源码安装", "set up frago", "frago installation", "deploy frago hooks", "从源码安装 frago", "配置 frago 模型", "frago profile", "配方没有 api key", "frago 备份", "frago-working-dir".
 license: AGPL-3.0
 ---
 
 ## Overview
-Install frago from source so the user's Claude Code (and opencode, if present) gains the frago runtime — hooks, knowledge index, CLI — then set up the two things without which most of frago sits idle: a backup of the working directory, and the credentials that let frago delegate work and call outside services. The agent performs every terminal step; the user's own hands are needed twice only — a browser login for GitHub, and typing API keys into a local web page, which is the one place a key should never be pasted into a chat.
 
-Main path: clone → `uv sync` → run the server once from the checkout (this is also the packaging step) → verify four artifacts → offer GitHub backup → configure model profiles and recipe credentials in the web UI → decide about the resident server → open the welcome page → end-to-end check.
+装 frago,让用户已经在用的那些 agent 命令行在开口那一刻就带着 frago 的知识和规则,再配好没有它 frago 就干不了活的那一样东西——轻量 ai 的鉴权。
+
+用户全程只动手两次:在一张本地网页上拿几个主意(接哪些、装哪些、配不配轻量 ai)、把网页给的那段配置贴回对话;选了备份的话再登录一次 GitHub。其余全部由 agent 完成,**中途不再问人**——所有决定都在开场页上一次收齐。
+
+主路径:跑探测脚本生成开场页 → 页面收全部决定 → 按决定装依赖和勾了的 agent 命令行 → 装本体 → 接会话 → 验收 → 取配方 → 建 profile → 备份 → 收尾页。
 
 ## Scope
-Do NOT install the desktop (Tauri) client, Node.js, or Claude Code itself. Do NOT run `frago init` — it installs Claude Code and rewrites authentication, which is not what a user asking to install frago is asking for. Do NOT touch the user's existing Claude Code authentication. Hand-writing config files is a fallback for when the server will not start, not a normal step.
 
-## Before you install: is this a server, and are you root?
-Most installs are one person's own machine — this section does not apply, install and move on. It matters when the target is a server the user will reach over the network, or when the install is running as **root**. A fresh cloud VPS logs you in as root by default, so this happens constantly without anyone choosing it. Check once, early: `id -u` is `0`, or the user talks about a server, a domain, "部署", "公网", exposing a page. Two things then go wrong, and neither prints an error:
+不装桌面客户端、不装 Node.js。agent 命令行(Claude Code、codex、opencode)只装用户在开场页上勾了「装上并接入」的,装完不替他登录。**不要跑 `frago init`**——它会装 Claude Code 并改写认证,这不是一个说「装 frago」的人要的东西。不碰用户已有的 Claude Code 认证。手写配置文件只是服务起不来时的兜底,不是正常步骤。
 
-- **The frago server token is a credential for running commands as whatever account the server runs as.** Installed as root, that token — and anything that slips past the access gate — is root on the whole box, not a sandbox.
-- **frago's sub-agents run as that same account, and Claude Code refuses to run its unattended permission-bypass (`--dangerously-skip-permissions`) as root.** So on a root install the agent side never starts: the web UI, recipes and knowledge index all work, but delegation (`frago agent`), the primary agent, and `frago remote` silently do nothing — the worker is spawned, Claude Code exits on the root refusal, and frago waits for a readiness signal that never comes. There is no line that says why. (This breakage is specific to how Claude Code guards root; it does not touch the token risk above, which stands regardless.)
+## 一条会毁掉安装的规矩
 
-So before installing on a server or as root, raise it with the user as a decision, not a step to push through — say what proceeding as root costs (a root-equivalent token, and an agent side that is silently dead), and that the fix is to run frago under a **dedicated non-root user**: create one (`useradd -m -s /bin/bash frago` or similar), and do the clone, the `uv` build, the resident server, and every later `frago` command as that user. The server may still need root for a privileged port or a systemd unit, but the account that runs `frago server` is the account every agent inherits, so that account must not be root. If the user understands the cost and still wants a root install — a throwaway box, no delegation needed — proceed, but state plainly what will not work.
+frago 拒绝从自己的源码检出运行。除 `server` 外的每条命令都会当场拒绝,服务本身也拒绝跑在仓库的虚拟环境里。这是故意的:仓库代码配上系统装的服务,是没有任何用户的机器上会出现的组合。
 
-This concerns Claude Code as the runtime driving the install. If the user runs the installing agent through opencode or codex instead, skip this section — those do not carry the root refusal, and this problem is out of scope for them.
+所以只有两种形态:
 
-## The one rule that breaks installs
-frago refuses to run from its own source checkout. Every command except `server` exits with a refusal, and the server refuses to run out of the repository's virtual environment. This is deliberate: repository code paired with a system-installed server is a combination no user runs.
+- 仓库里只准这一条:`uv run frago server start`(或 `restart`)。它抬补丁号、打 wheel、用 `uv tool install --force` 装成系统 frago,再把控制权交过去。源码变成产品就靠这一步。
+- 其他任何地方,都用普通的 `frago` 命令,上一步之后它住在 `~/.local/bin/frago`。
 
-So there are exactly two forms:
-- Inside the repository, only this: `uv run frago server start` (or `restart`). It bumps the patch version, builds a wheel, installs it as the system frago via `uv tool install --force`, and hands over. This is how source code becomes the installed product.
-- Everywhere else, the plain `frago` command, which after the step above lives at `~/.local/bin/frago`.
+**永远不要建议 `<repo>/.venv/bin/frago <任何命令>`。** 它会被拒绝,而那句拒绝在非技术用户眼里就是安装失败。
 
-Never suggest `<repo>/.venv/bin/frago <anything>`. It will be refused, and the refusal message reads like a failed install to a non-technical user.
+---
 
-## Steps
+## 步骤
 
-### 1. Prepare prerequisites
-**To install frago at all, git and uv are the whole list.** Python need not be pre-installed — uv downloads a managed Python per `requires-python>=3.13`. All locked dependencies ship pre-built wheels, so no C/C++ toolchain is needed on any OS.
-- macOS: ensure git via `xcode-select --install`; install uv via `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- Linux: install git and curl via apt/dnf/pacman; uv same as macOS.
-- Windows: `winget install Git.Git` (fallback: git-scm.com installer); uv via `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`.
-- On POSIX, uv lands in `~/.local/bin`, which may not be on PATH in the current session — call it as `~/.local/bin/uv` or `source ~/.local/bin/env` first.
+### 1. 跑探测脚本,生成开场页
 
-**Four more, each only for a particular capability.** frago installs and starts without any of them, which is exactly why they are worth naming here: what they break, breaks quietly — one capability at a time, long after the install was declared a success. Do not install them behind the user's back. Ask what they intend to use frago for, set up what that needs, and say plainly what stays unavailable.
+**不要自己探测,跑 skill 带的脚本。** 它在本文件旁边的 `assets/` 里,macOS / Linux 用 `setup-page.sh`,Windows 用 `setup-page.ps1`。**skill 目录就是本文件所在的目录**——加载这份 skill 时给你的那个路径;没给的话,找一下 `assets/setup-page.sh` 在哪(装成插件时多半在 `~/.claude/plugins/` 下)。只需要跑这一条:
 
-| Needed for | What | Missing means |
+```bash
+bash <skill 目录>/assets/setup-page.sh            # 探测这台机器,生成页面,打印生成后的路径
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
+```
+
+(加 `--json` 只打印探测结果不生成页面,排查时才用;正常安装不需要,探测结果已经嵌在页面里,也不用贴给用户看。)
+
+脚本做三件事,规则都写死在里面,agent 不用判断:
+
+- **认出是谁在跑它。** 顺着父进程链找 claude / codex / opencode / codebuddy,找不到再看 Claude Code 的环境变量。这个结果决定第 2 屏哪一个是「正在用」——那一个必须接上,页面上锁死不让取消,因为 frago 正是通过它在给用户装。
+- **查四个 agent 命令行在不在**:claude、codex、opencode、codebuddy(含 WorkBuddy 桌面应用内嵌的那份,固定路径在脚本里)。没装的也进页面,用户可以勾「装上并接入」;agent 装不了的(WorkBuddy 只有桌面版,Linux 上 codex 要 Node.js)页面会说明「自己装好后再跑一次 skill」。
+- **查依赖在不在**:git、uv、tmux、Edge(macOS 查应用目录,Linux 查 Edge 或 Chromium 命令)、ffmpeg、gh,Linux 再加 bubblewrap。缺的每一项配上这台系统上的装法,写成人看得懂的一句。
+
+然后把探测结果嵌进模板 `frago-setup-intro.html`,生成到临时目录,打印路径。模板本身没有任何机器状态,直接打开只显示一句「要由 skill 生成后打开」;**不要改 skill 目录里的模板**。
+
+**这一步一样都不装。** 装哪些由用户在页面上勾。
+
+### 2. 打开生成的页面,等用户的决定
+
+装了 Edge 就用无边框窗口开脚本打印的那个路径:
+
+```
+open -na "Microsoft Edge" --args --app="file://<生成的路径>" --window-size=1200,820
+```
+
+没有 Edge 就交给系统默认浏览器:macOS `open <路径>`,Linux `xdg-open <路径>`,Windows `start <路径>`。这一步发生在 frago 装好之前,没有配方运行器可用,只能走系统自己的打开方式。页面按视口自适应,矮于 900 像素会自动收紧间距。
+
+**打开之后告诉用户去哪看。** 这些命令成功了也没有回显,窗口可能落在别的窗口后面(全屏会议、另一块屏)。说一句「页面开在 Edge 里,标题是『frago — 装之前先问你几件事』,没看到就切过去」,然后等。用户说没弹出来,再用系统默认浏览器开一次同一个路径。
+
+页面中英双语,按浏览器语言默认,右上角可切;每屏一个地址 `#1`…`#5`,要把用户送回某一屏就开带锚点的路径。这一页不是安装进度,是安装前的问卷,五屏各收一个决定:这是什么、接上哪些命令行(含要不要装没装的)、允许装哪些软件(含装完留不留常驻服务、要不要创建私有仓库备份)、轻量 ai 配不配、过一遍决定后交给你。最后一屏是一段配置文本,用户复制、贴回对话,你从这段文本开始干活。配了轻量 ai 的话,页面先让他把钥匙存成本机文件 `frago-setup-key.json`(浏览器下载),配置里只写这个文件在哪。**钥匙走文件不走对话**:贴进对话它就永久留在会话记录里,以后谁翻到这段对话谁就拿到了它。
+
+贴回来的配置长这样,后面每一步都照它办,**不再问用户第二遍**:
+
+```json
+{
+  "frago_setup": 2,
+  "os": "darwin",
+  "lang": "zh",                            // 用户在页面上用的语言(zh / en),之后跟他说话用这个
+  "running": "claude",                     // 脚本认出的、正在跑这份 skill 的 agent
+  "connect": ["claude", "codex"],          // 已装且勾了接上的命令行(running 一定在里面)
+  "install_agents": ["opencode"],          // 没装、勾了「装上并接入」的命令行(第 3 步)
+  "install": ["tmux"],                     // 勾了允许装的依赖(第 3 步)
+  "skip": ["ffmpeg", "gh"],                // 没勾的,对应能力明说不可用
+  "keep_server": true,                     // 装完留不留常驻服务(第 12 步)
+  "backup": false,                         // 要不要创建私有仓库备份(第 11 步)
+  "lightagent": { "vendor": "deepseek", "endpoint_type": "deepseek", "url": "…", "model": "…", "key_file": "~/Downloads/frago-setup-key.json" }   // 或 null = 先不配
+}
+```
+
+`vendor` 是页面上选的(deepseek / openrouter / custom),`endpoint_type` 是 frago profile 认的类型。`key_file` 是钥匙文件的位置:页面默认写浏览器的下载目录,用户改过就以贴回来的为准。钥匙文件里是 `{ "frago_setup_key": 2, vendor, endpoint_type, url, model, api_key }`。
+
+收到配置之后立刻开始干活,中途不再打断用户。钥匙文件在第 9 步读一次、建好 profile 就删。
+
+四个 agent 的接法不一样,页面上不用区分,agent 自己要清楚:claude、codex、opencode 在第 6 步服务启动时被接上,之后用户自己开的每个会话都带注入;codebuddy 是 frago 派活时的一个机位,frago 起它的时候才把钩子挂上,用户自己开的 WorkBuddy 会话不受影响。一个都没有也能装完:网页、配方、知识索引照常工作,只是没有会话能收到注入、也派不出活,收尾时要明说。
+
+### 3. 按用户的决定装依赖,和他勾了的 agent 命令行
+
+**装 frago 本体只需要 git 和 uv。** 缺了的在页面上是锁死的必装项,直接装。Python 不用预装,uv 会按 `requires-python>=3.13` 拉一个托管版本。所有锁定依赖都有预编译轮子,任何系统都不需要编译器。
+
+- macOS:`xcode-select --install` 保证有 git;uv 用 `curl -LsSf https://astral.sh/uv/install.sh | sh`。
+- Linux:apt/dnf/pacman 装 git、curl;uv 同上。
+- Windows:`winget install Git.Git`(兜底:git-scm.com 的安装包);uv 用 `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`。
+- POSIX 上 uv 落在 `~/.local/bin`,当前 shell 可能还没有它,先 `source ~/.local/bin/env` 或直接用绝对路径。
+
+**另外几样,各管一种能力。** 缺了哪一样 frago 都照常装完、照常启动,这正是要在开场页上逐条列给用户勾的原因:它们坏的时候是静默的,一次坏一种能力,离「安装成功」已经过去很久。**只装贴回来的配置里 `install` 列出的;`skip` 里的一律不装,装完时明说那项能力用不了。**这张表是给你自己看的,用户已经在页面上看过同样的话。
+
+| 干什么要它 | 是什么 | 缺了会怎样 |
 |---|---|---|
-| Delegating work (`frago agent`), the primary agent, `frago remote` | **tmux** | The worker never starts; `Error: tmux not found` is the whole message. Step 6, configuring model profiles, buys nothing without it |
-| Browser automation (`frago browser`) | **Microsoft Edge**, or another Chromium-family browser | `frago browser check` lists every browser as not found and asks for Edge |
-| Recording a tab, or the virtual desktop (`frago desktop`) | **ffmpeg** | The recording call fails outright; everything else keeps working. The virtual desktop also wants tmux and Edge |
-| Running recipes **on Linux** | **bubblewrap** (`bwrap`) | Recipes are refused rather than run unconfined. macOS uses its own sandbox and needs nothing extra |
+| 派活(`frago agent`)、主代理、`frago remote`;也是替用户过 codex 信任门的工具 | **tmux** | worker 永远起不来,全部报错就一句 `Error: tmux not found`。没有它,第 9 步建 profile 等于白建 |
+| 浏览器自动化(`frago browser`) | **Microsoft Edge**,或别的 Chromium 系浏览器 | `frago browser check` 把每个浏览器都列成未找到,并提示装 Edge |
+| 录标签页、虚拟桌面(`frago desktop`) | **ffmpeg** | 录制调用直接失败,别的都正常。虚拟桌面还要 tmux 和 Edge |
+| **Linux 上**跑配方 | **bubblewrap**(`bwrap`) | 配方被拒绝运行,而不是不隔离地跑。macOS 用系统自带沙箱,不需要额外装 |
+| 创建私有仓库备份(第 11 步) | **gh** | 建不了私有仓库、推不上去。页面上勾了「创建私有仓库」会连带勾上它 |
 
-Where they come from: on macOS, tmux and ffmpeg via Homebrew, Edge from microsoft.com/edge as a normal app. On Linux, tmux, ffmpeg and bubblewrap from the distribution's package manager; Edge or Chromium from its repository. On Windows, Edge ships with the system and ffmpeg comes from winget, but tmux does not exist natively — delegation there needs WSL.
+从哪来:macOS 上 tmux 和 ffmpeg 走 Homebrew,Edge 从 microsoft.com/edge 当普通应用装。Linux 上 tmux、ffmpeg、bubblewrap 走发行版的包管理器,Edge 或 Chromium 从它的仓库装。Windows 自带 Edge,ffmpeg 走 winget,但 tmux 没有原生版本——那上面派活得进 WSL。
 
-**Edge, not Chrome.** frago's default browser backend drives Edge's *real* profile through an extension, which is what makes the user's existing logins usable. Chrome Stable has silently ignored the extension-loading flag since v137, so a Chrome-only machine cannot take that path at all. Earlier versions of this skill said "Google Chrome is optional (browser automation only)" — wrong in both halves, and it pointed people down a road that does not go anywhere.
+**要 Edge,不要 Chrome。** frago 默认的浏览器后端通过扩展驱动 Edge 的*真实* profile,用户已有的登录态因此能直接用。Chrome 稳定版从 v137 起静默忽略加载扩展的参数,只有 Chrome 的机器走不了这条路。本 skill 早先的版本写过「Chrome 可选,只用于浏览器自动化」——两半都错,把人往一条不通的路上引。
 
-`~/.local/bin` must end up on the user's permanent PATH, not just this shell. frago's hooks invoke the bare command `frago`; if the shell that launches Claude Code cannot find it, hooks still fire but every knowledge injection comes back empty, and nothing announces why. Check the user's shell profile and add it if missing.
+**`~/.local/bin` 必须进用户的永久 PATH,不只是当前这个 shell。** frago 的钩子敲的是裸命令 `frago`;启动 Claude Code 的那个 shell 找不到它,钩子照样触发,但每次知识注入都是空的,而且没有任何一行告诉你为什么。检查用户的 shell 配置文件,缺了就补上。
 
-### 2. Clone and build the environment
-`git clone https://github.com/tsaijamey/frago.git` to a stable path such as `~/frago`. In regions where github.com is unreachable, prefix with a mirror: `https://mirror.ghproxy.com/https://github.com/tsaijamey/frago.git` or `https://ghproxy.net/...`. Then run `uv sync` inside the repository (no `--all-extras --dev` needed). Keep the checkout — later steps read a file from it, and upgrades are a `git pull` plus one server restart.
+**用户勾了「装上并接入」的 agent 命令行(`install_agents`),在这一步装。** 用页面上写的那条路:Claude Code 和 opencode 走各自的官方安装脚本,macOS 上 codex 走 Homebrew。装完**不要替用户登录**,也不要碰它的认证——页面上已经告诉他装完得自己登录一次;收尾时再提醒一遍,并说明登录之前那个命令行收不到注入。没勾的一个都不装,页面上标了「agent 装不了」的(WorkBuddy、Linux 上的 codex)更不要试。
 
-### 3. Publish and start: run the server once from the checkout
-Run `uv run frago server start` from inside the repository and wait. Expect output naming the version it bumped to, the wheel it built, and the handover to the system frago. On startup the product code automatically:
-- deploys the platform hook binary to `~/.frago/bin/frago-core` and deletes stale copies from older layouts;
-- registers events in `~/.claude/settings.json` by merge-write, leaving unrelated hooks untouched;
-- deploys the opencode bridge to `~/.config/opencode/plugin/` when opencode is installed.
+### 4. 服务器 / root 判断
 
-Deployment finishes roughly twenty seconds into startup, not instantly. Checking too early shows a half-configured machine; wait for the server to answer before verifying.
+多数安装是一个人自己的机器,这一节不适用,直接装。它适用于两种情况:目标是一台用户要从网络访问的服务器,或者当前就是以 **root** 在装。云主机默认就是 root 登录,所以这经常在没人选择的情况下发生。早点查一次:`id -u` 是不是 0,或者用户在说服务器、域名、部署、公网、开放页面。
 
-### 4. Verify four artifacts
-Run these as the plain `frago` command, from any directory that is not the checkout:
-- `frago --version` prints the version that was just installed.
-- `frago book` prints the knowledge index.
-- `~/.frago/bin/frago-core` exists and is executable (`frago-core.exe` on Windows).
-- The `hooks` section of `~/.claude/settings.json` registers, for SessionStart, UserPromptSubmit and PreToolUse, a command ending in `frago-core --engine` with `timeout: 10`.
+两件事会出问题,而且都不报错:
 
-The `--engine` flag is not optional. That binary holds two programs: without the flag it starts the agentic kernel instead of routing the hook event, and hooks go silently dead.
+- **frago 的服务令牌等于以服务运行的那个账号执行命令的权限。** 装成 root,这个令牌就是整台机器的 root,不是沙箱。
+- **claude 拒绝以 root 跑它的免确认模式。** frago 的子代理跑在同一个账号下,所以 root 安装时代理那一侧永远起不来:网页、配方、知识索引都正常,但派活、主代理、`frago remote` 静默失效——worker 起了,claude 因 root 退出,frago 一直等一个永远不会来的就绪信号。没有任何一行说明原因。
 
-There is no `~/.frago/runtime.json` any more. If an older guide tells you to create or check one, ignore it — nothing reads that file.
+第二条**只对 claude 成立**。选 codex 或 opencode 当干活机位时,root 下照样能派活。第一条与选哪个机位无关。
 
-If the user runs opencode, also confirm `~/.config/opencode/plugin/` contains `frago-hook.js` alongside three `.json` files.
+装在服务器上或以 root 装之前,把这件事当成一个决定摆给用户,而不是一步推过去。说清代价,并说明解法是建一个**专用的非 root 用户**:`useradd -m -s /bin/bash frago` 之类,然后 clone、uv 构建、常驻服务、以及之后每一条 frago 命令都以这个用户身份跑。服务本身可能仍需 root 来绑特权端口或装 systemd 单元,但**跑 `frago server` 的那个账号是每个代理继承的账号,所以它不能是 root**。用户理解了代价仍然要 root 装,就装,但要明说什么会不能用。
 
-### 5. Offer to back up the working directory to GitHub
-Everything the user accumulates through frago — recipes they build, knowledge domains they fill, routing rules, run history — lives in `~/.frago`. It is not in the repository they just cloned and no upgrade recreates it. frago is designed to keep that directory as a git repository mirrored to a **private** GitHub repository named `frago-working-dir`, which is also what makes a second machine possible.
+### 5. 取源码、建环境
 
-Raise this as a choice, not a step to push through: explain what is being backed up and where, and ask whether the user wants it. If they decline, say plainly that their recipes and knowledge then exist on this machine only, and move on — everything else works without it.
+`git clone https://github.com/tsaijamey/frago.git` 到一个稳定路径,比如 `~/frago`。github.com 不通的地区可以加镜像前缀:`https://mirror.ghproxy.com/https://github.com/tsaijamey/frago.git` 或 `https://ghproxy.net/...`。然后在仓库里跑 `uv sync`(不需要 `--all-extras --dev`)。
 
-If they accept:
+检出要留着:后面有一步要从里面拷一个文件,升级也就是 `git pull` 加一次服务重启。
 
-**a. Make sure the gh CLI is there and logged in.** Check `gh --version` and `gh auth status`. Install if missing — macOS `brew install gh`, Debian/Ubuntu `sudo apt install gh`, Fedora `sudo dnf install gh`, Windows `winget install GitHub.cli`.
+### 6. 在仓库里跑一次服务
 
-`gh auth login` is interactive: it asks a few questions and opens a browser for a one-time code. The agent cannot answer those prompts on the user's behalf, so hand it over explicitly — in Claude Code the user can run it in place by typing `!gh auth login`, and the login is complete when `gh auth status` reports the account. Users who have no GitHub account create one at github.com first; the login flow will not do it for them.
+`uv run frago server start`,然后等。输出会依次报出它抬到的版本号、打出的 wheel、以及交给系统 frago 的那一刻。启动过程中产品代码会自动完成:
 
-**b. Put the ignore rules in place before anything is committed.** `~/.frago` holds `profiles.json`, `recipes.local.json` and `config.json`, all of which contain API keys in plain text. The package ships the authoritative ignore list; nothing deploys it automatically, so copy it from the checkout:
+- 把包里的知识铺到 `~/.frago`——`book/` 目录、`constitution.md`、`agent-disciplines.md`。**已存在的文件一律不覆盖**,所以用户改过的内容不会被升级抹掉;后续版本新增的条目仍然到得了。
+- 把平台二进制部署到 `~/.frago/bin/frago-core`,并清掉旧布局留下的残留。
+- 合并写入 `~/.claude/settings.json`,不动其他钩子。
+- 装了 opencode 就把桥铺到 `~/.config/opencode/plugin/`。
+- 装了 codex 就把同一个引擎注册进 `~/.codex/hooks.json`。
+
+部署在启动后二十秒左右才完成,不是瞬间。太早去检查看到的是一台半配好的机器,等服务应答之后再验。
+
+**按 `connect` 收口。** 服务启动时会给本机装了的 claude、codex、opencode 全部注册,不看用户勾没勾(第 3 步新装的也算在内)。`running` 那一个用户取消不了,一定在 `connect` 里。用户在页面上点掉的那个,启动后把它那份注册删掉:Claude Code 是 `~/.claude/settings.json` 里 hooks 段带 `frago-core --engine` 的条目,codex 是 `~/.codex/hooks.json`,opencode 是 `~/.config/opencode/plugin/` 下的 frago 文件。并告诉用户:下次 `frago server restart` 会再加回来,那时再删一次——这是产品目前的限制,不是他勾错了。codebuddy 不用做任何事:它只在 frago 派活起它时才挂钩子,用户自己开的 WorkBuddy 会话本来就不受影响。
+
+**替用户过 codex 的信任门(勾了 codex 才做)。** codex 不直接运行新装的钩子,要先过目并信任它的确切定义,信任记录写在 `~/.codex/config.toml` 的 `[hooks.state]` 里,每个钩子一条哈希。这道门归 agent,不归用户:有 tmux 就在 tmux 里起一次 `codex`(不带 `--dangerously-bypass-hook-trust`,那个参数会绕过这道门、什么都不写),看到「Hooks need review」选 Trust all,退出,再看 `config.toml` 里有没有多出四条 `trusted_hash`。这条路走的是 codex 自己的流程,哈希一定对;不要自己算哈希写进去——它是对 codex 内部结构序列化后算的,拼不出来。没有 tmux 才退回让用户自己进一次 codex 选 Trust all。*本 skill 写下这一段时,tmux 驱动这一步还没实际跑过;跑不通就明说,退回让用户点。*
+
+### 7. 验收:只验 frago 自己修不好的
+
+**不要去数注册了几个事件、超时是多少、桥接文件有几个。** 那些是 frago 每次启动自己重新算、对不上就覆盖的东西,人去清点等于替产品检查它有没有正确执行自己的同步,而且数字一改 skill 就假失败一次。
+
+要验的是这几件:
+
+- **`~/.local/bin` 在不在永久 PATH 里。** 在一个全新的终端里跑 `frago --version`。这件事 frago 修不了。
+- **`~/.claude/settings.json` 里有没有 frago 的条目。** 查「有没有」,不查「几条、超时多少」。二进制跑不起来时同步会整个跳过、一条都不注册,那是真正的失败。
+- **codex 的信任(勾了 codex 才有)。** 第 6 步替用户过了门之后,`~/.codex/config.toml` 里应有四条 `trusted_hash`。没有就是没过成,回去重做或交给用户点。
+- **端到端。** 让用户重启 Claude Code。新会话开头出现 frago 的知识注入,就证明整条链通了:PATH 找得到 frago、设置指向二进制、二进制路由了事件、命令行应答了。这一条过了,前面那些逐项清点本来就不必要。
+
+`~/.frago/runtime.json` 不存在了。旧指南要你创建或检查它的话,忽略——没有任何代码读它。
+
+### 8. 取配方
+
+**包里一个配方都不带**,`frago init` 也装不来。公开的那批住在 `tsaijamey/frago-recipe-community`。
+
+这一步**不要问用户「你需要哪个」**。他刚装完,没见过任何一个配方,不知道配方是一段能重复跑、还带界面的活,更不知道社区仓库里有什么——这个决定他没有判断依据。
+
+做法是:`frago recipe search <关键词>` 看社区仓库实际有什么,拿这次对话里已经知道的用户是谁、干什么活,提两三个具体的推荐,他点头才装。不是列一整屏让他自己挑。
+
+然后告诉他以后怎么补:手上有一件具体的活时,先让 agent 查一次有没有现成的,再考虑从头写。
+
+### 9. 建轻量 ai 的 profile
+
+看贴回来的配置里的 `lightagent`:是 `null` 就跳过,并在收尾时说一句「轻量 ai 没配,规则和知识现在按关键词硬匹配,以后在 frago 设置页随时补」。有值就读 `key_file` 指的那个文件(`~` 和 `%USERPROFILE%` 要展开),取出 `api_key`,通过 frago 自己的设置接口把 profile 建起来,**不要手写 `~/.frago/profiles.json`**——那个文件存明文钥匙、按属主权限写入,创建和编辑只走产品自己的接口。**建好 profile 立刻把钥匙文件删掉**,并告诉用户删了。
+
+`key_file` 指的位置没有这个文件时:同一目录下找 `frago-setup-key*.json`(浏览器碰到同名会存成 `frago-setup-key (1).json`),取最新的那个;还是没有,就告诉用户浏览器没把钥匙文件存到配置里写的位置,请他看下载栏、把实际位置贴回来。不要猜别的目录,不要让用户把钥匙贴进对话。
+
+轻量 ai 只认 HTTP 端点加钥匙,支持的端点类型是 deepseek、custom、anthropic、official、claude。命令行装的 agent(codebuddy 之类)不能当它的后端。
+
+DeepSeek 当前的模型是 `deepseek-v4-flash`(还有 v4-pro 和 vision 版),端点 `https://api.deepseek.com`。`deepseek-chat` 和 `deepseek-reason` 已经下线,不要再用。
+
+建完用 `frago profile list` 验一下,它打印保存的 profile 并把钥匙打码。这条命令是只读的——创建和编辑只在网页设置页。
+
+### 10. 配方钥匙
+
+调用外部服务的配方从 `~/.frago/recipes.local.json` 读自己的钥匙。缺钥匙的配方会当场失败并报出缺什么。
+
+只给用户真要跑的那几个配。某个配方这样失败时,打开 `http://127.0.0.1:8093` 的配方页,让用户填它的凭据对话框——字段是配方自己声明的,只问它真正需要的那几个。规矩和 profile 一样:钥匙填进页面,不填进对话。
+
+### 11. 备份工作目录
+
+用户通过 frago 攒下来的一切——建的配方、填的知识域、路由规则、跑过的记录,还有他改过的宪法和 book——都在 `~/.frago`。它不在刚 clone 的仓库里,任何升级都不会重建它。frago 的设计是把这个目录做成一个 git 仓库,镜像到一个**私有**的 GitHub 仓库 `frago-working-dir`,这也是换第二台机器的前提。
+
+用户已经在开场页上决定过了:贴回来的配置里 `backup` 是 `false` 就跳过这一步,收尾时说一句他的配方和知识现在只存在于这台机器上,以后想备份再说;**不要再问一遍**。是 `true` 才往下:
+
+**a. 确认 gh 在且已登录。** `gh --version` 和 `gh auth status`。缺了就装:macOS `brew install gh`、Debian/Ubuntu `sudo apt install gh`、Fedora `sudo dnf install gh`、Windows `winget install GitHub.cli`。
+
+`gh auth login` 是交互式的,会问几个问题并开浏览器要一次性码。agent 替不了用户回答,所以明确交回去——在 Claude Code 里用户可以直接敲 `!gh auth login` 就地跑,`gh auth status` 报出账号就算完成。没有 GitHub 账号的用户先去 github.com 注册,登录流程不会替他建。
+
+**b. 先铺忽略规则,再提交任何东西。** 包里带着权威的忽略清单,但**没有任何代码会自动铺它**,从检出拷过去:
 
 `cp <repo>/src/frago/resources/frago-home-gitignore.template ~/.frago/.gitignore`
 
-**c. Confirm no secret is staged, before the first push.** Run `git -C ~/.frago init` (skip if already a repository), then `git -C ~/.frago status --short` and read the list. If `profiles.json`, `recipes.local.json`, `config.json` or any `.env` file appears, stop — the ignore file did not land. Never push past this check.
+**c. 第一次推之前,确认没有凭据进了暂存区。** `git -C ~/.frago init`(已经是仓库就跳过),然后 `git -C ~/.frago status --short` 逐行读。下面任何一个出现就停下——忽略规则没生效:
 
-**d. Create the private repository and push.** `git -C ~/.frago add -A && git -C ~/.frago commit -m "frago working dir"`, then `gh repo create frago-working-dir --private --source ~/.frago --push`. Tell the user the repository is private and why that matters: it holds their work, their notes, and the shape of what they automate.
+`server-token`、`remotes.json`、`config.yaml`、`users.json`、`login-sessions/`、`published.json`、`profiles.json`、`recipes.local.json`、`config.json`、任何 `.env`。
 
-Later syncs are ordinary git — commit and push from `~/.frago`. On a second machine, clone that repository into `~/.frago` before installing frago there.
+前五个是这台机器和其他机器的通行凭据,拿到即等于拿到它指向的东西。**这一关没过,绝不往下推。**
 
-### 6. Configure model profiles (needed before frago can delegate work)
-frago runs sub-agents for the user — research, monitoring, long jobs — and each sub-agent needs a model to run on. Those live in model profiles, and a fresh install has none. Without one, delegation falls back to whatever the user's own Claude Code is authenticated as, and `frago agent --use-profile <name>` has nothing to select.
+**d. 建私有仓库并推送。** `git -C ~/.frago add -A && git -C ~/.frago commit -m "frago working dir"`,然后 `gh repo create frago-working-dir --private --source ~/.frago --push`。告诉用户这个仓库是私有的,以及为什么这件事重要:它装着他的工作、他的笔记、以及他自动化了什么的形状。
 
-Profiles are created in the web settings page, never by hand: the file holds plaintext API keys and is written with owner-only permissions. Open `http://127.0.0.1:8093`, go to Settings, and use the Profiles panel. Each profile needs a display name, an endpoint type, an API key, and — for non-Anthropic endpoints — a base URL and the model names to use. Ask the user which provider they already pay for; do not recommend signing up for anything.
+**以后的同步不要教普通 git。** 网页上有一页「数据仓库」,列出 `~/.frago` 里还有多少东西等着备份、哪些会备哪些不会,点一下就起一个 agent 替他分组、提交、推送。换第二台机器时,先把那个仓库 clone 进 `~/.frago`,再在那台机器上装 frago。
 
-Tell the user plainly: paste the key into that page, not into the chat. Verify afterwards with `frago profile list`, which prints saved profiles with keys masked. That command is read-only by design — creating and editing happen only in the web UI.
+### 12. 常驻服务的去留
 
-### 7. Configure recipe credentials (only for recipes the user will actually run)
-Recipes that call an outside service read their key from `~/.frago/recipes.local.json`. A recipe with no key fails immediately with a message naming what is missing — for example the built-in image-reading recipe reports `api_key missing` and stops.
+服务提供 8093 上的网页、调度和任务入口。第 9、10 步需要它在跑。按贴回来的配置里 `keep_server` 办,**不要再问**:`false` 就在第 13 步收尾页之后跑 `frago server stop`——磁盘上的东西全在,钩子链照常工作,只是网页和调度没有了,以后要改凭据得先 `frago server start`。
 
-Do not pre-fill keys for recipes the user has not asked for. When a recipe does fail this way, open `http://127.0.0.1:8093`, go to Recipes, open that recipe, and have the user fill its credentials dialog — the fields are generated from what the recipe itself declares, so only the keys it truly needs are asked for. Same rule as profiles: the key goes into the page, not the chat.
+### 13. 收尾页:交给欢迎配方
 
-### 8. Decide about the resident server
-The server provides the web UI on port 8093, scheduling, and task intake. Steps 6 and 7 need it running. Ask whether to keep it. If the user says no, run `frago server stop` — every on-disk artifact remains and the hook chain keeps working; only the web UI and scheduling go away, and the user will need `frago server start` again to change credentials later.
-
-### 9. Hand over the welcome page
-At this point everything works and the user has seen none of it. frago ships no recipes of its own, so fetch the one that introduces it from the community repository and run it — both commands, in this order, every install:
+到这里一切都能用了,而用户还什么都没见着。frago 自己不带配方,所以从社区仓库取那个负责介绍它的配方来跑——两条命令,按这个顺序,每次安装都跑:
 
 ```bash
 frago recipe install community:frago_welcome
 frago recipe run frago_welcome
 ```
 
-The first pulls the recipe from `tsaijamey/frago-recipe-community`; the second prepares the page and hands it to the user's **own default browser** (the recipe returns `open_url` and the runner opens it). Do not use `frago browser navigate` for this — that drives the agent's controlled browser, which the user is not looking at. Do not paste the address and ask them to open it either; running the recipe is what opens it.
+第一条从 `tsaijamey/frago-recipe-community` 拉配方;第二条把页面准备好,交给用户**自己的默认浏览器**(配方返回 `open_url`,运行器负责打开)。**不要用 `frago browser navigate` 开它**——那驱动的是 agent 自己控制的浏览器,用户看不到。也不要把地址贴出来让用户自己开;跑配方这个动作本身就是打开。
 
-Six screens, each with its own address (`#1`…`#6`, so any one of them can be reopened or sent to someone): what changed with the install, what they can ask for right now, a live demo, how that demo worked, and where to go next.
+六屏,每屏有自己的地址(`#1`…`#6`,任何一屏都能单独重开或发给别人):装完变了什么、现在就能提什么要求、一个现场演示、那个演示是怎么做到的、接下来去哪。
 
-Two things on the page reach back into this machine, and both are worth knowing about before the user presses them:
+页面上有两处会反过来碰这台机器,用户按之前 agent 要心里有数:
 
-- **The demo on screen four** — the user writes a rule of their own, presses a button, and it is stored in a knowledge domain here. The page then sends them back to this terminal to ask you about that rule.
-- **The "not really" buttons on screen two** — each one hands its question to a real agent session on this machine and prints the answer. That needs a model to be reachable: with step 6 done it answers in a few seconds; without one it falls back to a written sample and says on screen that it is a sample. Either way nothing breaks.
+- **第四屏的演示**——用户写一条自己的规则、按一个按钮,它就存进这台机器的一个知识域。页面接着把他送回这个终端,让他来问你那条规则。
+- **第二屏的「不是吧」按钮**——每个按钮把它的问题交给这台机器上的一个真实 agent 会话,把答案打在屏上。这需要有模型可用:第 9 步做完了,几秒内答出来;没做,退回一段写好的样例,并在屏上说明这是样例。两种情况都不会坏。
 
-When the user comes back and asks about the rule they stored, **answer it the way you would answer anything: look before you speak.** frago LightAgent routes the question to the domain it belongs in; if it does not, `frago my-rules find` reads it directly. Never tell them what their rule was from having watched them type it — that proves nothing. Read it back from the machine.
+用户回来问他存的那条规则时,**像回答任何问题一样回答:先看再说。** frago 的轻量 ai 会把问题路由到它所属的知识域;没路由到就 `frago my-rules find` 直接读。绝不能因为看着他打字就复述给他——那证明不了任何事。从机器上读回来。
 
-Say the page is open and let them drive it. Do not narrate the screens.
+说页面已经打开,让用户自己走。不要替他讲解每一屏。
 
-If either command fails (no network, repository unreachable), say so plainly and move on to the check below — the install itself is fine without the page.
+两条命令任何一条失败(没网、仓库不通),明说,然后回到第 7 步的端到端检查——没有这张页,安装本身也是好的。第 13 步跑成了的话,用户存的那条规则比会话开头那条横幅更硬:它撑过重启,而从它答出来走的是同一条链。
 
-### 10. Final end-to-end check
-Have the user restart Claude Code. A new session should show frago's knowledge index injected at session start, which proves the whole chain: PATH finds `frago`, settings.json points at the binary, the binary routes the event, the CLI answers.
+---
 
-If step 9 ran, the rule the user stored is a stronger check than the banner: it survives the restart, and answering from it exercises the same chain end to end.
+## 排查:按用户看到的现象
 
-## Troubleshooting, by what the user sees
-- "Refusing to run: this frago comes from the source checkout" — a command was run from inside the repository. Run it from elsewhere as the plain `frago`, or, if it is genuinely the server, use `uv run frago server start` from the repository.
-- Sessions start with no frago knowledge — check PATH first (`frago --version` in a fresh terminal), then that the registered command in settings.json ends with `--engine`, then that `~/.frago/bin/frago-core` is executable.
-- `frago: command not found` — `~/.local/bin` is not on the permanent PATH; fix the shell profile rather than using absolute paths.
-- Port 8093 already in use — another frago server is already running; `frago server status` confirms it. Do not start a second one.
-- A recipe stops with `api_key missing` — that is step 7, not a broken install.
-- Delegation does nothing: `frago agent` returns without a worker ever starting — tmux is missing (step 1), or this is a root install (see the section above). Configuring more model profiles will not help either one.
-- `frago browser check` shows every browser as not found — no Chromium-family browser is installed; Edge is the one to add, and Chrome alone will not do (step 1).
-- A recording fails while everything else works — ffmpeg is missing (step 1).
-- On Linux, recipes are refused before they run — bubblewrap is missing (step 1). This is a refusal on purpose, not a crash.
-- `gh auth login` opens no browser (headless or remote machine) — choose the device-code path it offers and open the URL on any other device; the code is short-lived, so retry rather than reuse an expired one.
-- `gh repo create` reports the name is taken — the user already has a `frago-working-dir`, probably from another machine. Clone that one into `~/.frago` instead of creating a second.
+- **「Refusing to run: this frago comes from the source checkout」** —— 在仓库里跑了命令。换个目录用普通的 `frago`;确实是服务的话,在仓库里用 `uv run frago server start`。
+- **会话开头没有 frago 的知识** —— 先查 PATH(在全新终端里 `frago --version`),再查 `~/.claude/settings.json` 里到底有没有 frago 的条目,最后查 `~/.frago/bin/frago-core` 可不可执行。
+- **`frago: command not found`** —— `~/.local/bin` 没进永久 PATH。改 shell 配置文件,不要拿绝对路径凑合。
+- **codex 里什么都没注入** —— 钩子没被信任,第 6 步那一下没过成。在 tmux 里再走一遍,或让用户进 codex 选 Trust all。
+- **派不出活,worker 起不来** —— 先看有没有 tmux(第 3 步);再看是不是 root 装的且机位选的是 claude(见第 4 步)。多建几个 profile 对这两种都没用。
+- **`frago browser check` 把每个浏览器都列成未找到** —— 没装 Chromium 系浏览器。要装的是 Edge,只有 Chrome 不行(第 3 步)。
+- **录制失败,别的都正常** —— 缺 ffmpeg(第 3 步)。
+- **Linux 上配方还没跑就被拒绝** —— 缺 bubblewrap(第 3 步)。这是故意的拒绝,不是崩溃。
+- **8093 端口被占** —— 已经有一个 frago 服务在跑,`frago server status` 能确认。不要再起第二个。
+- **配方报缺 api_key** —— 那是第 10 步,不是装坏了。
+- **`gh auth login` 开不出浏览器**(无头或远程机器)—— 选它给出的设备码方式,在任何别的设备上打开那个网址。码有时效,过期就重来,别重复用。
+- **`gh repo create` 说名字被占** —— 用户已经有一个 `frago-working-dir`,多半来自另一台机器。把那个 clone 进 `~/.frago`,不要建第二个。
 
-## Appendix: manual fallback (only when `uv run frago server start` fails outright)
-Also usable as an acceptance checklist:
-1. `~/.frago/config.json` (write only if absent, never overwrite): `{"schema_version": "1.0", "auth_method": "official", "init_completed": true}`. `auth_method=official` means the user's existing Claude Code auth is untouched.
-2. `mkdir -p ~/.frago/bin/`, copy `<repo>/src/frago/bin/<platform>/frago-core` there (platform directories: darwin-arm64, darwin-x86_64, linux-x86_64, windows-x86_64; Windows filename `frago-core.exe`; on platforms without a binary, such as linux-aarch64, hooks are unavailable but the CLI works). POSIX: `chmod 755`.
-3. Merge-write the `hooks` section of `~/.claude/settings.json`, never overwriting wholesale. Run `<binary> --supported-events` for the live event list, and append per event `{"matcher": "", "hooks": [{"type": "command", "command": "<absolute path to frago-core> --engine", "timeout": 10}]}`, skipping commands already registered. On Windows write the path with forward slashes — Claude Code launches hooks through Git Bash, which eats backslashes.
-4. Do NOT hand-write: `hook-rules.json` (builtin rules are compiled into the binary), `~/.frago/books/` (knowledge ships inside the Python package), `profiles.json` or `recipes.local.json` (both hold plaintext keys and belong in the web UI), AGENTS.md. Other `~/.frago` subdirectories are created lazily. The one file worth placing by hand is `~/.frago/.gitignore`, and only from the template named in step 5.
+## 附录:手工兜底(仅当 `uv run frago server start` 彻底失败)
 
-## Appendix: third-party endpoint for Claude Code itself (optional)
-Only when the user has no official Anthropic authentication, and only for their own Claude Code — this is separate from frago's model profiles in step 6, which serve sub-agents. Merge into the `env` section of `~/.claude/settings.json` the seven keys ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, ANTHROPIC_API_KEY (deepseek example: base_url=https://api.deepseek.com/anthropic); and ensure `~/.claude.json` contains `{"hasCompletedOnboarding": true, "lastOnboardingVersion": "1.0.0", "isQualifiedForDataSharing": false}` to skip the official login onboarding.
+也可当验收清单用:
 
+1. `~/.frago/config.json`(不存在才写,永不覆盖):`{"schema_version": "1.0", "auth_method": "official", "init_completed": true}`。`auth_method=official` 表示不动用户已有的 Claude Code 认证。
+2. `mkdir -p ~/.frago/bin/`,把 `<repo>/src/frago/bin/<平台>/frago-core` 拷过去。平台目录:darwin-arm64、darwin-x86_64、linux-x86_64、windows-x86_64;Windows 文件名是 `frago-core.exe`;没有对应二进制的平台(如 linux-aarch64)钩子不可用,但命令行仍然能用。POSIX 上 `chmod 755`。
+3. 合并写入 `~/.claude/settings.json` 的 hooks 段,**永不整体覆盖**。事件清单和超时值都要问二进制自己:`<binary> --supported-events` 给出事件和 matcher,不要凭记忆写死。每个事件追加 `{"matcher": "<它给的>", "hooks": [{"type": "command", "command": "<frago-core 绝对路径> --engine", "timeout": <当前值>}]}`,已注册的跳过。`--engine` 不可省——那个二进制里有两个程序,不带这个参数会启动内核而不是路由钩子事件,钩子就静默失效了。Windows 上路径写正斜杠,Claude Code 通过 Git Bash 启动钩子,反斜杠会被吃掉。
+4. **不要手写**:`hook-rules.json`(内置规则编译在二进制里)、`~/.frago/book/`(服务启动时自己铺,且不覆盖已有)、`profiles.json` 和 `recipes.local.json`(都存明文钥匙,只走网页)、AGENTS.md。`~/.frago` 下其他子目录都是懒创建的。唯一值得手工放的是 `~/.frago/.gitignore`,而且只从第 11 步说的那个模板拷。
+
+## 附录:给 Claude Code 自己配第三方端点(可选)
+
+仅当用户没有 Anthropic 官方认证,且只针对他自己的 Claude Code——这和第 9 步 frago 的模型 profile 是两件事,后者服务的是子代理。合并进 `~/.claude/settings.json` 的 `env` 段:ANTHROPIC_BASE_URL、ANTHROPIC_MODEL、ANTHROPIC_DEFAULT_SONNET_MODEL、ANTHROPIC_DEFAULT_HAIKU_MODEL、API_TIMEOUT_MS、CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC、ANTHROPIC_API_KEY(DeepSeek 的 base_url 是 `https://api.deepseek.com/anthropic`);并确保 `~/.claude.json` 里有 `{"hasCompletedOnboarding": true, "lastOnboardingVersion": "1.0.0", "isQualifiedForDataSharing": false}` 以跳过官方登录引导。
 
 ---
 
