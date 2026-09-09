@@ -72,12 +72,10 @@ ok_uv=0;     { has uv || [ -x "$HOME/.local/bin/uv" ]; } && ok_uv=1
 ok_tmux=0;   has tmux && ok_tmux=1
 ok_ffmpeg=0; has ffmpeg && ok_ffmpeg=1
 ok_gh=0;     has gh && ok_gh=1
-ok_edge=0
-if [ "$os" = darwin ]; then
-  [ -d "/Applications/Microsoft Edge.app" ] && ok_edge=1
-else
-  for c in microsoft-edge microsoft-edge-stable microsoft-edge-beta chromium chromium-browser; do has "$c" && { ok_edge=1; break; }; done
-fi
+# 浏览器不是用户要装的东西:frago 自己取一份 Chrome for Testing 放这儿。
+# 探它只为让页面显示「已就绪」还是「装的时候取」,两种都不用用户动手。
+ok_cft=0
+[ -d "$HOME/.frago/tools/chrome-for-testing" ] && ok_cft=1
 ok_bwrap=0; has bwrap && ok_bwrap=1
 
 # ── 「怎么装」:按这台机器的系统写成人看得懂的一句,中英各一份(页面按语言取) ──
@@ -88,7 +86,6 @@ if [ "$os" = darwin ]; then
   how_uv="官方安装脚本,装到 ~/.local/bin";           how_uv_en="official install script, into ~/.local/bin"
   how_tmux="$via_brew"; how_ffmpeg="$via_brew"; how_gh="$via_brew"
   how_tmux_en="$via_brew_en"; how_ffmpeg_en="$via_brew_en"; how_gh_en="$via_brew_en"
-  how_edge="从 microsoft.com/edge 下载,当普通应用装"; how_edge_en="download from microsoft.com/edge, install like any app"
   how_claude="官方安装脚本";     how_claude_en="official install script";   manual_claude=false
   how_codex="$via_brew";        how_codex_en="$via_brew_en";              manual_codex=false
   how_opencode="$via_brew";     how_opencode_en="$via_brew_en";           manual_opencode=false
@@ -106,7 +103,6 @@ else
   how_uv="官方安装脚本,装到 ~/.local/bin";           how_uv_en="official install script, into ~/.local/bin"
   how_tmux="$via_pm"; how_ffmpeg="$via_pm"; how_gh="$via_pm"; how_bwrap="$via_pm"
   how_tmux_en="$via_pm_en"; how_ffmpeg_en="$via_pm_en"; how_gh_en="$via_pm_en"; how_bwrap_en="$via_pm_en"
-  how_edge="从微软的软件源装 Edge,或$via_pm Chromium"; how_edge_en="Edge from Microsoft's repository, or Chromium $via_pm_en"
   how_claude="官方安装脚本";     how_claude_en="official install script";   manual_claude=false
   how_codex="需要 Node.js,自己装好后再跑一次这份 skill 就能接上"; how_codex_en="needs Node.js; install it yourself, then run this skill again"; manual_codex=true
   how_opencode="官方安装脚本";   how_opencode_en="official install script"; manual_opencode=false
@@ -123,7 +119,7 @@ tool() { # id name ok required how how_en
   printf '{"id":"%s","name":"%s","ok":%s,"required":%s,"how":"%s","how_en":"%s"}' "$1" "$2" "$(b "$3")" "$4" "$(q "$5")" "$(q "$6")"
 }
 
-tools="$(tool git git $ok_git true "$how_git" "$how_git_en"),$(tool uv uv $ok_uv true "$how_uv" "$how_uv_en"),$(tool tmux tmux $ok_tmux false "$how_tmux" "$how_tmux_en"),$(tool edge "Microsoft Edge" $ok_edge false "$how_edge" "$how_edge_en"),$(tool ffmpeg ffmpeg $ok_ffmpeg false "$how_ffmpeg" "$how_ffmpeg_en"),$(tool gh "GitHub CLI (gh)" $ok_gh false "$how_gh" "$how_gh_en")"
+tools="$(tool git git $ok_git true "$how_git" "$how_git_en"),$(tool uv uv $ok_uv true "$how_uv" "$how_uv_en"),$(tool tmux tmux $ok_tmux false "$how_tmux" "$how_tmux_en"),$(tool browser "浏览器（frago 自带）" $ok_cft false "装的时候由 frago 取,不用你动手" "fetched by frago during install; nothing for you to do"),$(tool ffmpeg ffmpeg $ok_ffmpeg false "$how_ffmpeg" "$how_ffmpeg_en"),$(tool gh "GitHub CLI (gh)" $ok_gh false "$how_gh" "$how_gh_en")"
 [ "$os" = linux ] && tools="$tools,$(tool bwrap bubblewrap $ok_bwrap false "$how_bwrap" "$how_bwrap_en")"
 
 json="{\"os\":\"$os\",\"running\":\"$running\",\"agents\":[$(agent claude "Claude Code" $ok_claude "$how_claude" "$how_claude_en" $manual_claude),$(agent codex codex $ok_codex "$how_codex" "$how_codex_en" $manual_codex),$(agent opencode opencode $ok_opencode "$how_opencode" "$how_opencode_en" $manual_opencode),$(agent codebuddy WorkBuddy $ok_codebuddy "$how_codebuddy" "$how_codebuddy_en" $manual_codebuddy)],\"tools\":[$tools]}"

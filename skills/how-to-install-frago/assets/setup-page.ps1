@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File assets\setup-page.ps1 -Json        # 只打印探测结果
 #   powershell -ExecutionPolicy Bypass -File assets\setup-page.ps1 -Out PATH    # 指定生成到哪
 #
-# 检测规则与 setup-page.sh 对齐;差别只在 Windows 自带 Edge、没有原生 tmux。
+# 检测规则与 setup-page.sh 对齐;差别只在 Windows 没有原生 tmux。
 
 param(
   [switch]$Json,
@@ -45,7 +45,7 @@ $tools = @(
   @{ id="git";    name="git";              ok=(Has "git");    required=$true;  how="winget install Git.Git"; how_en="winget install Git.Git" }
   @{ id="uv";     name="uv";               ok=$uvOk;          required=$true;  how="官方安装脚本(PowerShell)"; how_en="official install script (PowerShell)" }
   @{ id="tmux";   name="tmux";             ok=(Has "tmux");   required=$false; how="Windows 没有原生 tmux,派活要进 WSL;这一项 agent 装不了"; how_en="no native tmux on Windows; delegation needs WSL, the agent cannot install this" }
-  @{ id="edge";   name="Microsoft Edge";   ok=$true;          required=$false; how=""; how_en="" }
+  @{ id="browser"; name="浏览器（frago 自带）"; ok=(Test-Path "$HOME\.frago\tools\chrome-for-testing"); required=$false; how="装的时候由 frago 取,不用你动手"; how_en="fetched by frago during install; nothing for you to do" }
   @{ id="ffmpeg"; name="ffmpeg";           ok=(Has "ffmpeg"); required=$false; how="winget install ffmpeg"; how_en="winget install ffmpeg" }
   @{ id="gh";     name="GitHub CLI (gh)";  ok=(Has "gh");     required=$false; how="winget install GitHub.cli"; how_en="winget install GitHub.cli" }
 )

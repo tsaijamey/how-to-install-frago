@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
 
 - **认出是谁在跑它。** 顺着父进程链找 claude / codex / opencode / codebuddy,找不到再看 Claude Code 的环境变量。这个结果决定第 2 屏哪一个是「正在用」——那一个必须接上,页面上锁死不让取消,因为 frago 正是通过它在给用户装。
 - **查四个 agent 命令行在不在**:claude、codex、opencode、codebuddy(含 WorkBuddy 桌面应用内嵌的那份,固定路径在脚本里)。没装的也进页面,用户可以勾「装上并接入」;agent 装不了的(WorkBuddy 只有桌面版,Linux 上 codex 要 Node.js)页面会说明「自己装好后再跑一次 skill」。
-- **查依赖在不在**:git、uv、tmux、Edge(macOS 查应用目录,Linux 查 Edge 或 Chromium 命令)、ffmpeg、gh,Linux 再加 bubblewrap。缺的每一项配上这台系统上的装法,写成人看得懂的一句。
+- **查依赖在不在**:git、uv、tmux、ffmpeg、gh,Linux 再加 bubblewrap。缺的每一项配上这台系统上的装法,写成人看得懂的一句。浏览器不在这张单子里——frago 自己带一份,不用用户装(见第 3 步)。
 
 然后把探测结果嵌进模板 `frago-setup-intro.html`,生成到临时目录,打印路径。模板本身没有任何机器状态,直接打开只显示一句「要由 skill 生成后打开」;**不要改 skill 目录里的模板**。
 
@@ -57,15 +57,9 @@ powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
 
 ### 2. 打开生成的页面,等用户的决定
 
-装了 Edge 就用无边框窗口开脚本打印的那个路径:
+交给用户的系统默认浏览器:macOS `open <路径>`,Linux `xdg-open <路径>`,Windows `start <路径>`。这一步发生在 frago 装好之前,没有配方运行器、也还没有 agent 专用的浏览器,只能走系统自己的打开方式。页面按视口自适应,矮于 900 像素会自动收紧间距。
 
-```
-open -na "Microsoft Edge" --args --app="file://<生成的路径>" --window-size=1200,820
-```
-
-没有 Edge 就交给系统默认浏览器:macOS `open <路径>`,Linux `xdg-open <路径>`,Windows `start <路径>`。这一步发生在 frago 装好之前,没有配方运行器可用,只能走系统自己的打开方式。页面按视口自适应,矮于 900 像素会自动收紧间距。
-
-**打开之后告诉用户去哪看。** 这些命令成功了也没有回显,窗口可能落在别的窗口后面(全屏会议、另一块屏)。说一句「页面开在 Edge 里,标题是『frago — 装之前先问你几件事』,没看到就切过去」,然后等。用户说没弹出来,再用系统默认浏览器开一次同一个路径。
+**打开之后告诉用户去哪看。** 这些命令成功了也没有回显,窗口可能落在别的窗口后面(全屏会议、另一块屏)。说一句「页面开在你的浏览器里,标题是『frago — 装之前先问你几件事』,没看到就切过去」,然后等。用户说没弹出来,把路径给他,请他自己打开。
 
 页面中英双语,按浏览器语言默认,右上角可切;每屏一个地址 `#1`…`#5`,要把用户送回某一屏就开带锚点的路径。这一页不是安装进度,是安装前的问卷,五屏各收一个决定:这是什么、接上哪些命令行(含要不要装没装的)、允许装哪些软件(含装完留不留常驻服务、要不要创建私有仓库备份)、轻量 ai 配不配、过一遍决定后交给你。最后一屏是一段配置文本,用户复制、贴回对话,你从这段文本开始干活。配了轻量 ai 的话,页面先让他把钥匙存成本机文件 `frago-setup-key.json`(浏览器下载),配置里只写这个文件在哪。**钥匙走文件不走对话**:贴进对话它就永久留在会话记录里,以后谁翻到这段对话谁就拿到了它。
 
@@ -107,14 +101,27 @@ open -na "Microsoft Edge" --args --app="file://<生成的路径>" --window-size=
 | 干什么要它 | 是什么 | 缺了会怎样 |
 |---|---|---|
 | 派活(`frago agent`)、主代理、`frago remote`;也是替用户过 codex 信任门的工具 | **tmux** | worker 永远起不来,全部报错就一句 `Error: tmux not found`。没有它,第 9 步建 profile 等于白建 |
-| 浏览器自动化(`frago browser`) | **Microsoft Edge**,或别的 Chromium 系浏览器 | `frago browser check` 把每个浏览器都列成未找到,并提示装 Edge |
-| 录标签页、虚拟桌面(`frago desktop`) | **ffmpeg** | 录制调用直接失败,别的都正常。虚拟桌面还要 tmux 和 Edge |
+| 浏览器自动化(`frago browser`) | **不用装**——frago 自己取一份 Chrome for Testing(见下) | 没取到时才退回找用户装的 Chromium 系浏览器,一个都没有就把每个都列成未找到 |
+| 录标签页、虚拟桌面(`frago desktop`) | **ffmpeg** | 录制调用直接失败,别的都正常。虚拟桌面还要 tmux 和一个可用的浏览器 |
 | **Linux 上**跑配方 | **bubblewrap**(`bwrap`) | 配方被拒绝运行,而不是不隔离地跑。macOS 用系统自带沙箱,不需要额外装 |
 | 创建私有仓库备份(第 11 步) | **gh** | 建不了私有仓库、推不上去。页面上勾了「创建私有仓库」会连带勾上它 |
 
-从哪来:macOS 上 tmux 和 ffmpeg 走 Homebrew,Edge 从 microsoft.com/edge 当普通应用装。Linux 上 tmux、ffmpeg、bubblewrap 走发行版的包管理器,Edge 或 Chromium 从它的仓库装。Windows 自带 Edge,ffmpeg 走 winget,但 tmux 没有原生版本——那上面派活得进 WSL。
+从哪来:macOS 上 tmux 和 ffmpeg 走 Homebrew。Linux 上 tmux、ffmpeg、bubblewrap 走发行版的包管理器。Windows 上 ffmpeg 走 winget,但 tmux 没有原生版本——那上面派活得进 WSL。浏览器三个平台都不用装。
 
-**要 Edge,不要 Chrome。** frago 默认的浏览器后端通过扩展驱动 Edge 的*真实* profile,用户已有的登录态因此能直接用。Chrome 稳定版从 v137 起静默忽略加载扩展的参数,只有 Chrome 的机器走不了这条路。本 skill 早先的版本写过「Chrome 可选,只用于浏览器自动化」——两半都错,把人往一条不通的路上引。
+**浏览器由 frago 自己带,不要让用户装。** 取一份 Chrome for Testing 放进 `~/.frago/tools/chrome-for-testing/`,frago 会自动挑中它。这是 Google 官方为自动化场景发布的 Chrome 构建,压缩包不到 200 MB,解压后放着就能用——不进 `/Applications`、不要管理员权限、不注册成系统默认浏览器,也不会跟用户日常在用的那个抢 profile。
+
+早先的版本要求用户装 Edge,理由是「驱动真实 profile 才有登录态」。那条现在不成立了:agent 用的浏览器本来就该是专属的一个,登录态由用户在里面登一次积累,跟他日常那个浏览器分开反而更干净;而让人为了装个 agent 才去下 1.4 GB 的浏览器,是这一步最大的一道坎。
+
+怎么取,四步:
+
+1. 读 `https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json`,在 `channels.Stable.downloads.chrome` 里挑本平台那条(`mac-arm64` / `mac-x64` / `linux64` / `win64`)。
+2. 下载那个 zip,解压到 `~/.frago/tools/chrome-for-testing/`。解压后是一层带平台名的目录(如 `chrome-mac-arm64/`),**原样留着别铺平**,frago 按这个形状找可执行文件。
+3. macOS 上补一句 `xattr -cr "<那个 .app>"`。用浏览器下载会被系统打上隔离属性,不清就报「应用已损坏」;用 curl/wget 下的一般没有这个问题,但清一次不会错。
+4. 验:`frago browser check` 里 `Chrome for Testing` 那一行是 ✓,末尾 `Default:` 指向 `~/.frago/tools/chrome-for-testing/...`。
+
+约 200 MB,跨境链路上可能要几分钟,下载前跟用户说一声在下什么、多大。下不动就跳过——frago 会退回找机器上已有的 Chromium 系浏览器,收尾时说明浏览器自动化这一项要用哪个浏览器、或者稍后重取。
+
+**别把 Chrome 稳定版当备选。** 它从 v137 起静默忽略加载扩展的参数——不报错,只是扩展没进去,现象是「桥连不上」,跟登录、跟网络都对不上号,极难查。frago 的挑选顺序里刻意排除了它。用户机器上已经有 Edge / Chromium / Brave / Vivaldi 的,那些都能用,是 CfT 取不到时的退路。
 
 **`~/.local/bin` 必须进用户的永久 PATH,不只是当前这个 shell。** frago 的钩子敲的是裸命令 `frago`;启动 Claude Code 的那个 shell 找不到它,钩子照样触发,但每次知识注入都是空的,而且没有任何一行告诉你为什么。检查用户的 shell 配置文件,缺了就补上。
 
@@ -257,7 +264,7 @@ frago recipe run frago_welcome
 - **`frago: command not found`** —— `~/.local/bin` 没进永久 PATH。改 shell 配置文件,不要拿绝对路径凑合。
 - **codex 里什么都没注入** —— 钩子没被信任,第 6 步那一下没过成。在 tmux 里再走一遍,或让用户进 codex 选 Trust all。
 - **派不出活,worker 起不来** —— 先看有没有 tmux(第 3 步);再看是不是 root 装的且机位选的是 claude(见第 4 步)。多建几个 profile 对这两种都没用。
-- **`frago browser check` 把每个浏览器都列成未找到** —— 没装 Chromium 系浏览器。要装的是 Edge,只有 Chrome 不行(第 3 步)。
+- **`frago browser check` 把每个浏览器都列成未找到** —— Chrome for Testing 没取成,机器上也没有别的 Chromium 系浏览器。重取一次(第 3 步);`Chrome` 那一行显示可用不算数,稳定版走不了扩展这条路。
 - **录制失败,别的都正常** —— 缺 ffmpeg(第 3 步)。
 - **Linux 上配方还没跑就被拒绝** —— 缺 bubblewrap(第 3 步)。这是故意的拒绝,不是崩溃。
 - **8093 端口被占** —— 已经有一个 frago 服务在跑,`frago server status` 能确认。不要再起第二个。
