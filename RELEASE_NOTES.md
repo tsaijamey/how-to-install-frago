@@ -1,4 +1,6 @@
-## Unreleased — Windows asks where to install
+## Unreleased — Complete settings hand-over & Windows install target
+
+Installing through the skill now leaves `~/.frago/` fully configured so opening the WebUI lands directly in the workbench without triggering the missing-settings recovery flow. Step 9 writes `~/.frago/gui_config.json` (`language` and `agent_language`) via `PUT /api/config`, binds the model profile to all four background roles (`lightagent`, `observer`, `coreagent`, and `worker`) while leaving `main` CLI login untouched, enables `hook_review`, and marks `init_completed: true` in `~/.frago/config.json` via `POST /api/init/complete`.
 
 Windows no longer gets a single path. The probe reports how far WSL has got — not installed, installed without a distro, or with one — and the page asks a single question: install into native Windows, or into WSL. With no WSL the page only offers native and says so; with a distro already present it offers both and still recommends native, noting that installing into WSL is equally reasonable once it is there.
 

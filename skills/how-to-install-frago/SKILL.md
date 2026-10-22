@@ -71,7 +71,8 @@ powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
   "frago_setup": 2,
   "os": "darwin",
   "windows_target": "native",              // 仅 Windows 上有:装原生还是装 WSL(native / wsl);macOS、Linux 上没有这个字段
-  "lang": "zh",                            // 用户在页面上用的语言(zh / en),之后跟他说话用这个
+  "lang": "zh",                            // 用户在页面上用的语言(zh / en),之后跟他说话用这个,并在第 9 步写入 gui_config.json
+  "agent_lang": "",                        // Agent 回复语言("" 表示跟随界面语言)
   "running": "claude",                     // 脚本认出的、正在跑这份 skill 的 agent
   "connect": ["claude", "codex"],          // 已装且勾了接上的命令行(running 一定在里面)
   "install_agents": ["opencode"],          // 没装、勾了「装上并接入」的命令行(第 3 步)
@@ -79,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
   "skip": ["ffmpeg", "gh"],                // 没勾的,对应能力明说不可用
   "keep_server": true,                     // 装完留不留常驻服务(第 12 步)
   "backup": false,                         // 要不要创建私有仓库备份(第 11 步)
-  "lightagent": { "vendor": "deepseek", "endpoint_type": "deepseek", "url": "…", "model": "…", "key_file": "~/Downloads/frago-setup-key.json" }   // 或 null = 先不配
+  "lightagent": { "vendor": "deepseek", "endpoint_type": "deepseek", "url": "…", "model": "…", "roles": ["lightagent", "observer", "coreagent", "worker"], "key_file": "~/Downloads/frago-setup-key.json" }   // 或 null = 先不配
 }
 ```
 
@@ -190,17 +191,44 @@ powershell -ExecutionPolicy Bypass -File <skill 目录>\assets\setup-page.ps1
 
 然后告诉他以后怎么补:手上有一件具体的活时,先让 agent 查一次有没有现成的,再考虑从头写。
 
-### 9. 建轻量 ai 的 profile
+### 9. 写入界面语言、建模型 profile、绑定角色并标记初始配置完成
 
-看贴回来的配置里的 `lightagent`:是 `null` 就跳过,并在收尾时说一句「轻量 ai 没配,规则和知识现在按关键词硬匹配,以后在 frago 设置页随时补」。有值就读 `key_file` 指的那个文件(`~` 和 `%USERPROFILE%` 要展开),取出 `api_key`,通过 frago 自己的设置接口把 profile 建起来,**不要手写 `~/.frago/profiles.json`**——那个文件存明文钥匙、按属主权限写入,创建和编辑只走产品自己的接口。**建好 profile 立刻把钥匙文件删掉**,并告诉用户删了。
+这一步把用户在开场页上的决定完整写进 `~/.frago/` 下的三份设置文件(`gui_config.json`、`profiles.json`、`config.json`),确保用户装完打开网页就是一套配置齐备的工作台,绝不会再跳出「缺设置文件」的恢复引导页。**无论 `lightagent` 是对象还是 `null`,第 9a 步和第 9c 步都必须执行;所有写入一律走本机 `http://127.0.0.1:8093` 的设置接口,不要手写 `~/.frago/profiles.json`。**
 
-`key_file` 指的位置没有这个文件时:同一目录下找 `frago-setup-key*.json`(浏览器碰到同名会存成 `frago-setup-key (1).json`),取最新的那个;还是没有,就告诉用户浏览器没把钥匙文件存到配置里写的位置,请他看下载栏、把实际位置贴回来。不要猜别的目录,不要让用户把钥匙贴进对话。
+#### 9a. 写入界面语言与 Agent 回复语言(`~/.frago/gui_config.json`)
 
-轻量 ai 只认 HTTP 端点加钥匙,支持的端点类型是 deepseek、custom、anthropic、official、claude。命令行装的 agent(codebuddy 之类)不能当它的后端。
+按贴回来的 `lang`(`"zh"` 或 `"en"`)和 `agent_lang`(默认 `""`,即跟随界面语言)调用:
 
-DeepSeek 当前的模型是 `deepseek-v4-flash`(还有 v4-pro 和 vision 版),端点 `https://api.deepseek.com`。`deepseek-chat` 和 `deepseek-reason` 已经下线,不要再用。
+```text
+PUT http://127.0.0.1:8093/api/config
+{"language": "<lang>", "agent_language": ""}
+```
 
-建完用 `frago profile list` 验一下,它打印保存的 profile 并把钥匙打码。这条命令是只读的——创建和编辑只在网页设置页。
+#### 9b. 建模型 profile 并绑定四个后台角色(`~/.frago/profiles.json`)
+
+看贴回来的配置里的 `lightagent`:
+- 是 `null` 就跳过 9b,直接去 9c,并在收尾时说一句「轻量 ai 没配,规则和知识现在按关键词硬匹配、会话观察者暂不运行,以后在 frago 设置页随时补」。
+- 有值就读 `key_file` 指的那个文件(`~` 和 `%USERPROFILE%` 要展开),取出 `api_key`。(`key_file` 指的位置没有这个文件时:同一目录下找 `frago-setup-key*.json` 取最新的那个;还是没有就请用户看浏览器下载栏、把实际位置贴回来,不要让用户把钥匙贴进对话。)
+- 顺次调用以下四个接口,**建好 profile 立刻把钥匙文件删掉**并告诉用户删了:
+  1. **创建 profile**:`POST http://127.0.0.1:8093/api/settings/profiles`,请求体:
+     - 若 `endpoint_type` 是 `"deepseek"`,传 `{"name": "deepseek", "kind": "endpoint", "endpoint_type": "deepseek", "api_key": "<api_key>"}`(预设自动配齐 Anthropic 通道 `https://api.deepseek.com/anthropic` 与 OpenAI Responses 通道 `https://api.deepseek.com` / `deepseek-v4-flash`)。
+     - 若是其他端点,传 `{"name": "<vendor>", "kind": "endpoint", "endpoint_type": "<endpoint_type>", "api_key": "<api_key>", "url": "<url>", "default_model": "<model>"}`。
+  2. **查出新建 profile 的 `id`**:`GET http://127.0.0.1:8093/api/settings/profiles`,在 `profiles` 数组里按 `name` 取它的 `id`。
+  3. **绑定四个后台角色(`lightagent`、`observer`、`coreagent`、`worker`)**:对这四个角色逐一调用 `PUT http://127.0.0.1:8093/api/settings/connections/bindings/<role>`,请求体 `{"profile_id": "<id>"}`。**注意:只绑这四个角色,绝不绑 `main`**——`main` 留给用户自己的命令行订阅登录,不碰 `~/.claude/settings.json` 的认证。如果不显式绑定 `observer`,会话观察者默认不运行;如果不绑 `lightagent` / `coreagent` / `worker`,后台角色与子代理就没有明确归属。
+  4. **开启发话前引导(`hook_review`)**:`PUT http://127.0.0.1:8093/api/settings/hook-review`,请求体 `{"enabled": true}`。
+
+轻量 ai 与 `frago-core` 只认 HTTP 端点加钥匙,支持的端点类型是 deepseek、custom、aliyun、volcengine_plan 等。命令行装的 agent(codebuddy 之类)不能当它的后端。建完用 `frago profile list` 验一下,它打印保存的 profile 并把钥匙打码。
+
+#### 9c. 标记初始配置已完成(`~/.frago/config.json`)
+
+最后调用一次:
+
+```text
+POST http://127.0.0.1:8093/api/init/complete
+{"auth_method": "official"}
+```
+
+这一步把 `init_completed: true` 和 `auth_method: "official"` 写进 `~/.frago/config.json`(不动用户已有的 Claude Code 认证)。做完 9a–9c,用户的 `~/.frago/gui_config.json`、`~/.frago/profiles.json`、`~/.frago/config.json` 全部落盘齐备。
 
 ### 10. 配方钥匙
 
